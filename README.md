@@ -1,4 +1,4 @@
-# Zero-Timing Manifesto (`v1.0-core`)
+# Zero-Timing Core (`v1.0-core`)
 
 **Deterministic `no_std` Rust & `x86_64` Assembly data-plane core, Ring -1 micro-hypervisor, and zero-disk DDR-sealed 11-module ecosystem (`474.78 Mpps`).**
 
