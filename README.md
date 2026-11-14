@@ -14,3 +14,4 @@
   * `rmm_control_guard` (ID=10) & `residential_proxy_guard` (ID=11): Pure `.S` `x86_64` ASM RMM RCE & SOHO-router proxy botnet detectors.
 * **Benchmarks (`benchmarks/`):** All performance scripts and hardware logs live in [`benchmarks/README.md`](benchmarks/README.md) (`make test && make clean`).
 * **License & Support:** GPL-3.0 (`LICENSE`). TON / USDT: `UQBTjCDPiQIUl73F_1f-3ArppvjdfJ7mfONIyfDZl5d9z66Z`
+* **Visual Architecture (`docs/ARCHITECTURE_VISUAL.md`):** Vertical diagrams of the frozen core and 11-module pipeline.
