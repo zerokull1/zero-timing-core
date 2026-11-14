@@ -70,7 +70,7 @@ pub unsafe fn tx_send_frame(bar0: usize, mac: [u8; 6]) -> u8 {
     TX_PKT[12..14].copy_from_slice(&0x88B5u16.to_be_bytes()); // Custom EtherType
     TX_PKT[14..22].copy_from_slice(b"ZERORING");
 
-    let ring_addr = TX_RING.as_ptr() as u64;
+    let ring_addr = (&raw const TX_RING).cast::<TxDesc>() as u64;
     write_volatile((bar0 + 0x3800) as *mut u32, (ring_addr & 0xFFFF_FFFF) as u32); // TDBAL
     write_volatile((bar0 + 0x3804) as *mut u32, (ring_addr >> 32) as u32);        // TDBAH
     write_volatile((bar0 + 0x3808) as *mut u32, (8 * 16) as u32);                 // TDLEN
@@ -78,7 +78,7 @@ pub unsafe fn tx_send_frame(bar0: usize, mac: [u8; 6]) -> u8 {
     write_volatile((bar0 + 0x3818) as *mut u32, 0);                               // TDT
     write_volatile((bar0 + 0x0400) as *mut u32, (1 << 1) | (1 << 3));             // TCTL EN + PSP
 
-    TX_RING[0].addr = TX_PKT.as_ptr() as u64;
+    TX_RING[0].addr = (&raw const TX_PKT).cast::<u8>() as u64;
     TX_RING[0].length = 64;
     TX_RING[0].cmd = (1 << 0) | (1 << 1) | (1 << 3); // EOP | IFCS | RS
     TX_RING[0].status = 0;
