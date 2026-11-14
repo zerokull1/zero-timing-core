@@ -58,8 +58,12 @@ $(BUILD)/chain_orchestrator: $(MOD_DIR)/chain_orchestrator.c
 recorder: $(BUILD) flight_recorder/uring_dumper.c
 	$(CC) $(CFLAGS) flight_recorder/uring_dumper.c -o $(BUILD)/uring_dumper
 
-test: modules recorder
+test: modules recorder ddr_test
 	$(BUILD)/uring_dumper
 
 clean:
 	rm -rf $(BUILD)
+
+ddr_test: $(BUILD) $(MOD_DIR)/ddr_arena/ddr_arena.c $(MOD_DIR)/ddr_arena/ddr_arena_test.c
+	$(CC) $(CFLAGS) $(MOD_DIR)/ddr_arena/ddr_arena.c $(MOD_DIR)/ddr_arena/ddr_arena_test.c -o $(BUILD)/ddr_arena_test
+	$(BUILD)/ddr_arena_test
