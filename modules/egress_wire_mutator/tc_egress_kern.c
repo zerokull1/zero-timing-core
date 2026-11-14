@@ -5,6 +5,9 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 
+#define ZEROMANI_EGRESS_MASK 0x5A45
+
+// Выходной шлюз NIC: снимает внутреннюю хостовую мутацию и выпускает в сеть чистый трафик (TTL=65)
 SEC("classifier")
 int tc_egress_mutagen(struct __sk_buff *skb) {
     void *data = (void *)(long)skb->data;
@@ -18,7 +21,20 @@ int tc_egress_mutagen(struct __sk_buff *skb) {
     if ((void *)(iph + 1) > data_end) return TC_ACT_OK;
     if ((iph->daddr & bpf_htonl(0xFF000000)) == bpf_htonl(0x7F000000)) return TC_ACT_OK;
 
-    // На выходе из физической NIC нормализуем TTL обратно в стандартный 64 (как у обычного Linux-хоста)
+    // 1. Демутация внутреннего IPv4 Identification перед выходом в интернет
+    if ((iph->id & bpf_htons(0xFF00)) == bpf_htons(0x5A00)) {
+        __be16 old_id = iph->id;
+        __be16 clean_id = old_id ^ bpf_htons(ZEROMANI_EGRESS_MASK);
+        iph->id = clean_id;
+        bpf_l3_csum_replace(skb, sizeof(*eth) + offsetof(struct iphdr, check), old_id, clean_id, 2);
+    }
+
+    // 2. Нормализация TTL=65 на выходе NIC (для прозрачной раздачи со смартфона)
+    data = (void *)(long)skb->data;
+    data_end = (void *)(long)skb->data_end;
+    eth = data; iph = (void *)(eth + 1);
+    if ((void *)(iph + 1) > data_end) return TC_ACT_OK;
+
     if (iph->ttl != 65) {
         __u8 old_ttl = iph->ttl;
         __u8 new_ttl = 65;
