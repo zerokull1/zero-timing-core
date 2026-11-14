@@ -17,7 +17,7 @@ int ddr_arena_create(ddr_arena_t *a) {
     if (rw_view == MAP_FAILED) { close(arena_memfd); arena_memfd = -1; return -1; }
 
     a->base = rw_view;
-    a->total_size = DDR_ARENA_SIZE;
+    a->total_size = DDR_ARENA_SIZE; a->code_used = 64;
     if (mlock(rw_view, DDR_ARENA_SIZE) == 0) a->locked_in_ram = 1;
     return 0;
 }
