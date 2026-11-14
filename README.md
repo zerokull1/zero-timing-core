@@ -1,17 +1,32 @@
 # Zero-Timing Manifesto (`v1.0-core`)
 
-**Deterministic, ultra-low-latency `no_std` Rust & `x86_64` Assembly data-plane core, Ring -1 micro-hypervisor, and 11-module plug-in ecosystem.**
+**Deterministic `no_std` Rust & `x86_64` Assembly data-plane core, Ring -1 micro-hypervisor, and 11-module plug-in ecosystem.**
 
-* **Frozen Core (`src/`, `uefi_stage0/`, `zero-vault/`):** Constant-time `x86_64` ASM L7 DPI, zero-copy `AF_XDP` in 2MB HugePages (`42.36 Mpps`), Ring -1 EPT/NPT micro-hypervisor, and YMM15 key vault.
-* **Plug-In Modules (`modules/`):** Dynamic `ZEROMANI`-signed C & pure `x86_64` ASM (`.S`) extensions:
-  * `deception_tarpit` (ID=1): TCP Zero-Window tarpit (`126.34 Mpps`).
-  * `xdp_live_daemon` (ID=2) & `entropy_shaper` (ID=3): Live BPF sync & Shannon IAT shaper.
-  * `http_table_guard` (ID=4) & `https_tls_guard` (ID=7): Self-learning HPACK/Smuggling & non-MITM ClientHello/SNI guard.
-  * `anti_spoof_guard` (ID=5): Self-learning `MAC+IP+TTL` binding (`234.19 Mpps`).
-  * `ai_agent_watchdog` (ID=6): Kernel `inotify` + `SIGSTOP` host file guard.
-  * `ssl_vpn_session_guard` (ID=8): Pure `x86_64` ASM (`crc32q` + `cmov`, `3.53 cycles/pkt`) session-ticket anti-hijack.
-  * `egress_wire_mutator` (ID=9): Internal host MTD with `TC BPF` egress de-mutation (`TTL=65`).
-  * `rmm_control_guard` (ID=10) & `residential_proxy_guard` (ID=11): Pure `.S` `x86_64` ASM RMM RCE & SOHO-router proxy botnet detectors.
-* **Benchmarks (`benchmarks/`):** All performance scripts and hardware logs live in [`benchmarks/README.md`](benchmarks/README.md) (`make test && make clean`).
+## 1. Frozen Core Architecture (`v1.0-core`)
+
+```mermaid
+flowchart TD
+    HW["Hardware CPU / RAM / NIC (Intel VT-x / AMD-V)"] --> S0["Stage 0: Ephemeral UEFI BIOS (uefi_stage0/)<br/>USB Quorum + Zero NVRAM Write"]
+    S0 --> HV["Ring -1 Micro-Hypervisor (src/thin_hypervisor.rs)<br/>EPT Execute-Only / NPT Memory Isolation"]
+    HV --> VAULT["Silicon Key Vault (zero-vault/)<br/>Keys Pinned in YMM15 CPU Registers"]
+    VAULT --> CORE["Data-Plane Pipeline (2MB HugePages + PROT_NONE)<br/>Branchless x86_64 ASM / SWAR (42.36 Mpps)"]
+    CORE --> CAPS["Frozen Core Capsule v1.0-core<br/>256-bit Mutagen + ZEROMANI Signature"]
+```
+
+## 2. Plug-In Module Pipeline (`modules/` — 11 Modules)
+
+```mermaid
+flowchart TD
+    PKT["Incoming Frame (VLAN / IHL / TCP Dynamic Cursor)"] --> VERIFY{"ZEROMANI Signature Check (ABI v1)"}
+    VERIFY --> L2["Module #5: Anti-Spoof MAC + IP + TTL (234.19 Mpps)"]
+    L2 --> L4["Module #11: SOHO Router Proxy Botnet Detector (.S ASM)"]
+    L4 --> L7A["Modules #4 & #7: Self-Learning HTTP/HPACK & HTTPS/TLS"]
+    L7A --> L7B["Modules #8 & #10: x86_64 ASM SSL-VPN & RMM Guard (.S ASM)"]
+    L7B -- "Attack Detected" --> TRAP["Module #1: Sticky TCP Window = 0 Tarpit (126.34 Mpps)"]
+    L7B -- "Clean Traffic" --> SHAPE["Module #3: Shannon Entropy & IAT Jitter Shaper"]
+    SHAPE --> EGRESS["Module #9: Host MTD -> TC BPF Egress Clean TTL=65"]
+    VERIFY -. "Host Process Watch" .-> WD["Module #6: Kernel inotify + SIGSTOP Watchdog"]
+```
+
+* **Benchmarks & Build:** Run `make test && make clean` (see [`benchmarks/README.md`](benchmarks/README.md)).
 * **License & Support:** GPL-3.0 (`LICENSE`). TON / USDT: `UQBTjCDPiQIUl73F_1f-3ArppvjdfJ7mfONIyfDZl5d9z66Z`
-* **Visual Architecture (`docs/ARCHITECTURE_VISUAL.md`):** Vertical diagrams of the frozen core and 11-module pipeline.
