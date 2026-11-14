@@ -30,7 +30,7 @@ jobs:
           rustc --crate-type cdylib -C panic=abort -O cisco_daq_plugin/lib.rs -o cisco_daq_plugin/libzero_cisco_daq.so
           rustc --crate-type cdylib -C panic=abort -O hft_exchange_bridge/lib.rs -o hft_exchange_bridge/libzero_hft_exchange.so
       - name: Run Offline Replay Smoke Test
-        run: python3 tools/pcap_bench.py --count 10000
+        run: python3 benchmarks/pcap_bench.py --count 10000
       - name: Verify Bare-Metal Ring -1 Hypervisor in QEMU OVMF
         run: |
           sudo apt-get update -qq
@@ -60,4 +60,4 @@ jobs:
             hft_exchange_bridge/libzero_hft_exchange.so
             uefi_stage0/target/x86_64-unknown-uefi/release/zero_os_monolith.efi
             include/zero_timing.h
-            tools/pcap_bench.py
+            benchmarks/pcap_bench.py
