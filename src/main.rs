@@ -6,6 +6,7 @@
 #![no_main]
 
 pub mod nic_driver;
+pub mod core_proto_engine;
 mod tsc;
 #[allow(dead_code)]
 mod bpf_control;
