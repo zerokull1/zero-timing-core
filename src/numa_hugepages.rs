@@ -5,16 +5,18 @@
 
 use core::arch::asm;
 
-const SYS_MMAP: u64       = 9;
-const SYS_MUNMAP: u64     = 11;
-const SYS_MBIND: u64      = 237;
+const SYS_MMAP: u64         = 9;
+const SYS_MUNMAP: u64       = 11;
+const SYS_MBIND: u64        = 237;
 
-const PROT_READ_WRITE: u64 = 0x3;
+const PROT_READ_WRITE: u64  = 0x3;
 const MAP_PRIVATE_ANON: u64 = 0x22;
-const MAP_LOCKED: u64      = 0x2000;
-const MAP_HUGETLB: u64     = 0x40000;
-const MAP_HUGE_2MB: u64    = 21 << 26;
-const MPOL_BIND: u64       = 2;
+const MAP_LOCKED: u64       = 0x2000;
+const MAP_HUGETLB: u64      = 0x40000;
+const MAP_HUGE_2MB: u64     = 21 << 26;
+
+const MPOL_BIND: u64        = 2;
+const MPOL_MF_MOVE: u64     = 1 << 1; // Принудительная миграция уже выделенных страниц на целевую NUMA-ноду
 
 /// Прямой no_std системный вызов mmap (x86_64)
 #[inline(always)]
@@ -37,7 +39,7 @@ unsafe fn raw_sys_mmap(len: usize, flags: u64) -> isize { unsafe {
     ret
 }}
 
-/// Жёсткая привязка диапазона памяти к конкретному NUMA-узлу (sys_mbind, MPOL_BIND)
+/// Жёсткая привязка и миграция диапазона памяти на конкретный NUMA-узел (sys_mbind, MPOL_BIND | MPOL_MF_MOVE)
 #[inline(always)]
 pub unsafe fn bind_memory_to_numa_node(ptr: *mut u8, len: usize, numa_node: u32) -> bool { unsafe {
     let nodemask: u64 = 1u64 << (numa_node & 63);
@@ -50,7 +52,7 @@ pub unsafe fn bind_memory_to_numa_node(ptr: *mut u8, len: usize, numa_node: u32)
         in("rdx") MPOL_BIND,
         in("r10") (&nodemask as *const u64) as u64,
         in("r8") 64u64,
-        in("r9") 0u64,
+        in("r9") MPOL_MF_MOVE,
         out("rcx") _,
         out("r11") _,
         lateout("rax") ret,
@@ -59,27 +61,64 @@ pub unsafe fn bind_memory_to_numa_node(ptr: *mut u8, len: usize, numa_node: u32)
     ret == 0
 }}
 
-/// Выделение стерильной памяти на огромных страницах 2MB (Zero-TLB-Miss) с привязкой к NUMA Node 0
+/// Пошаговый прогрев выделенного DDR-региона по 64-байтным кэш-линиям (устраняет первый Page Fault)
+#[inline(always)]
+pub unsafe fn prefault_ddr_cachelines(ptr: *mut u8, len: usize) { unsafe {
+    if ptr.is_null() || len == 0 {
+        return;
+    }
+    let mut offset = 0usize;
+    while offset < len {
+        core::ptr::write_volatile(ptr.add(offset), 0u8);
+        offset += 64;
+    }
+    asm!("mfence", options(nostack));
+}}
+
+/// Выделение стерильной памяти на огромных страницах 2MB (Zero-TLB-Miss) с миграцией на целевую NUMA-ноду
 /// Возвращает (указатель, true если выделены реальные 2MB HugePages, false если откат на 4KB LOCKED)
 #[inline(always)]
 pub unsafe fn alloc_huge_numa_ring(size_bytes: usize, numa_node: u32) -> (*mut u8, bool) { unsafe {
     let aligned_len = (size_bytes + 0x1F_FFFF) & !0x1F_FFFF;
 
-    // 1. Пробуем выделить огромные страницы 2 МБ + заблокировать в физической ОЗУ (MAP_LOCKED)
-    let huge_ptr = raw_sys_mmap(aligned_len, MAP_PRIVATE_ANON | MAP_HUGETLB | MAP_HUGE_2MB | MAP_LOCKED);
+    // 1. Выделяем огромные страницы 2 МБ (без MAP_LOCKED до mbind, чтобы не блокировать миграцию на целевой сокет)
+    let huge_ptr = raw_sys_mmap(aligned_len, MAP_PRIVATE_ANON | MAP_HUGETLB | MAP_HUGE_2MB);
     if huge_ptr > 0 && (huge_ptr as usize) < 0xFFFF_FFFF_FFFF_0000 {
         let p = huge_ptr as *mut u8;
         let _ = bind_memory_to_numa_node(p, aligned_len, numa_node);
+        prefault_ddr_cachelines(p, aligned_len);
         return (p, true);
     }
 
-    // 2. Безопасный откат на обычные страницы с блокировкой от выгрузки в swap (MAP_LOCKED)
+    // 2. Безопасный откат на обычные страницы с NUMA-миграцией и блокировкой от выгрузки в swap (MAP_LOCKED)
     let std_ptr = raw_sys_mmap(aligned_len, MAP_PRIVATE_ANON | MAP_LOCKED);
     if std_ptr > 0 && (std_ptr as usize) < 0xFFFF_FFFF_FFFF_0000 {
         let p = std_ptr as *mut u8;
         let _ = bind_memory_to_numa_node(p, aligned_len, numa_node);
+        prefault_ddr_cachelines(p, aligned_len);
         return (p, false);
     }
 
     (core::ptr::null_mut(), false)
+}}
+
+/// Освобождение DDR-региона через прямой системный вызов munmap
+#[inline(always)]
+pub unsafe fn free_huge_numa_ring(ptr: *mut u8, size_bytes: usize) -> bool { unsafe {
+    if ptr.is_null() || size_bytes == 0 {
+        return false;
+    }
+    let aligned_len = (size_bytes + 0x1F_FFFF) & !0x1F_FFFF;
+    let ret: isize;
+    asm!(
+        "syscall",
+        in("rax") SYS_MUNMAP,
+        in("rdi") ptr as u64,
+        in("rsi") aligned_len,
+        out("rcx") _,
+        out("r11") _,
+        lateout("rax") ret,
+        options(nostack)
+    );
+    ret == 0
 }}
