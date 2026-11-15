@@ -99,3 +99,10 @@ SEC("xdp_peer")
 int xdp_peer_pass(struct xdp_md *ctx) {
     return XDP_PASS;
 }
+
+/* ZTM_PROTO_FAST_FILTER: грубая отсечка невалидных длин NTP (<48B) и DNS (<12B) на уровне XDP */
+static __always_inline int ztm_xdp_udp_sanity(__u16 dport, __u32 udp_payload_len) {
+    if (dport == __bpf_htons(123) && udp_payload_len < 48) return XDP_DROP;
+    if (dport == __bpf_htons(53)  && udp_payload_len < 12) return XDP_DROP;
+    return XDP_PASS;
+}
