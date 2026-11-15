@@ -14,7 +14,7 @@ echo "======================================================================"
 echo -e "\n[1] ПЛАТФОРМА, BIOS И ПРОЦЕССОРЫ (INTEL XEON)"
 dmidecode -s system-product-name 2>/dev/null || true
 dmidecode -s bios-version 2>/dev/null || true
-lscpu | grep -E "Model name:|Socket\(s\):|Core\(s\) per socket:|Thread\(s\) per core:|NUMA node\(s\):"
+LC_ALL=C lscpu | grep -E "Model name:|Socket\(s\):|Core\(s\) per socket:|Thread\(s\) per core:|NUMA node\(s\):"
 VMX_OK=$(grep -cw "vmx" /proc/cpuinfo || true)
 echo "VT-x (vmx) потоков : $VMX_OK"
 IOMMU_CNT=$(find /sys/kernel/iommu_groups/ -maxdepth 1 -mindepth 1 2>/dev/null | wc -l)
