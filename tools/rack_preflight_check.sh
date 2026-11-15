@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 # Zero-Timing Core: Экспресс-приёмка и диагностика Dell PowerEdge R730 (Bare-Metal)
 set -euo pipefail
 

@@ -1,3 +1,4 @@
+// ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 #ifndef ZERO_DDR_ARENA_H
 #define ZERO_DDR_ARENA_H
 

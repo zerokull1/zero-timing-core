@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+// ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 
 mod pci_nic;
 #[path = "../src/thin_hypervisor.rs"]

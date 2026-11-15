@@ -1,3 +1,4 @@
+// ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 #[allow(dead_code)]
 use core::arch::asm;
 use core::ptr::read_unaligned;

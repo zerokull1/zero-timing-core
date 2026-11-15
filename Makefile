@@ -1,3 +1,4 @@
+# ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 CC      ?= gcc
 CLANG   ?= clang
 CFLAGS  := -O3 -march=native -Wall -Wextra

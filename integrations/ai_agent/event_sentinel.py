@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 import ctypes, mmap, os, select, socket, struct, subprocess, urllib.request, json
 
 SYS_BPF, BPF_OBJ_GET = 321, 7

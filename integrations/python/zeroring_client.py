@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 """
 Zero-Timing Manifesto v1.1.0-beta — Zero-Copy Python SDK (ctypes / mmap)
 Чтение телеметрии ZERORING и управление контуром Active Defense (Ловушки и MTD).

@@ -1,3 +1,4 @@
+# ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 all: mutagen_kern.o mutagen-ctl
 
 mutagen_kern.o: mutagen_kern.c

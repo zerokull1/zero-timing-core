@@ -1,3 +1,4 @@
+// ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 #include "ddr_arena.h"
 #include <stdio.h>
 #include <stdint.h>

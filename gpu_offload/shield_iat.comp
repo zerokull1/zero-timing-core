@@ -1,3 +1,4 @@
+// ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 #version 450
 #extension GL_ARB_gpu_shader_int64 : enable
 layout(local_size_x = 256) in;

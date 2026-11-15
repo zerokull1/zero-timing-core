@@ -1,3 +1,4 @@
+# ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 all: shield_iat.spv vk_iat_bridge
 
 shield_iat.spv: shield_iat.comp

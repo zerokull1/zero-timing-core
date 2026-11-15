@@ -1,3 +1,4 @@
+// ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 /* ZERO_XDP_TTL_GUARD v1.3.0: Early L3/L4 TTL==0, Tiny-Fragment, TCP Null & L7 SWAR (HTTP Smuggling + TLS Record Splitting) */
 #include <linux/bpf.h>
 #include <linux/if_ether.h>

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 """
 Zero-Timing Manifesto v1.1.0-beta — Offline PCAP & Synthetic Threat Replay Benchmark
 Прогон реальных .pcap дампов или синтетического микса (TLS/HTTP + аномальные зонды/Flood)

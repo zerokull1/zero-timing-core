@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 set -e
 IFACE=${1:-wlp0s20u5}
 

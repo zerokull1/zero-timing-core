@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 set -e
 rustc --crate-type cdylib -C panic=abort -C strip=symbols -O sdk_template/src/lib.rs -o /tmp/libhybrid_sdk.so
 objdump -d -M intel /tmp/libhybrid_sdk.so | grep -q "vmovntdq"

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
