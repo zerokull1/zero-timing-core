@@ -6,3 +6,6 @@ uefi_stage0/Cargo.lock
 *.o
 dist/
 build_core_bundle/
+
+SESSION_HANDOFF.txt
+ZERO_TIMING_ARCHITECTURE_SUMMARY.txt
