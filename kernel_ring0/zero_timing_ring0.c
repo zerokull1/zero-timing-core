@@ -16,11 +16,12 @@
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("zerokull1 (ZEROMANI)");
-MODULE_DESCRIPTION("Zero-Timing Core: Monolithic Ring-0 Engine v2.3");
+MODULE_DESCRIPTION("Zero-Timing Core: Monolithic Ring-0 Engine v2.4");
 
 static atomic_t engine_enforce_mode   = ATOMIC_INIT(0);
 static atomic_t const_time_window_tsc = ATOMIC_INIT(0);
 static u64 epoch_salt                 = 0x9E3779B97F4A7C15ULL;
+static u64 epoch_salt_hi              = 0x517CC1B727220A95ULL;
 static DEFINE_PER_CPU(u64, percpu_jitter_state);
 
 static atomic64_t stat_rx_pkts       = ATOMIC64_INIT(0);
@@ -44,9 +45,36 @@ struct ring0_flow_slot {
     atomic64_t last_tsc;
     atomic64_t prev_tail_qword;
     atomic_t   tcp_state;
+    atomic_t   expected_seq;
 } ____cacheline_aligned;
 
 static struct ring0_flow_slot flow_table[FLOW_BUCKETS];
+
+static __always_inline u64 siphash_1_3_u32(u32 val, u64 k0, u64 k1)
+{
+    u64 v0 = k0 ^ 0x736f6d6570736575ULL;
+    u64 v1 = k1 ^ 0x646f72616e646f6dULL;
+    u64 v2 = k0 ^ 0x6c7967656e657261ULL;
+    u64 v3 = k1 ^ 0x7465646279746573ULL;
+    u64 m = ((u64)4 << 56) | (u64)val;
+
+    #define SIPROUND do { \
+        v0 += v1; v1 = rol64(v1, 13); v1 ^= v0; v0 = rol64(v0, 32); \
+        v2 += v3; v3 = rol64(v3, 16); v3 ^= v2; \
+        v0 += v3; v3 = rol64(v3, 21); v3 ^= v0; \
+        v2 += v1; v1 = rol64(v1, 17); v1 ^= v2; v2 = rol64(v2, 32); \
+    } while (0)
+
+    v3 ^= m;
+    SIPROUND;
+    v0 ^= m;
+    v2 ^= 0xff;
+    SIPROUND;
+    SIPROUND;
+    SIPROUND;
+    #undef SIPROUND
+    return (v0 ^ v1) ^ (v2 ^ v3);
+}
 
 static __always_inline u64 hash_5tuple_ring0_hw(u32 saddr, u32 daddr, u16 sport, u16 dport, u8 proto)
 {
@@ -64,8 +92,8 @@ static __always_inline u64 hash_5tuple_ring0_hw(u32 saddr, u32 daddr, u16 sport,
 }
 
 static __always_inline u64 track_flow_stateful(
-    u64 fhash, u64 pkt_len, u64 now_tsc, u64 new_tail, bool has_tail,
-    bool is_syn, bool is_ack, bool *out_established)
+    u64 fhash, u64 pkt_len, u64 now_tsc, u64 new_tail, u32 payload_len,
+    u32 seq_host, bool is_syn, bool is_ack, bool *out_established)
 {
     u32 idx = (u32)(fhash & (FLOW_BUCKETS - 1));
     struct ring0_flow_slot *slot = &flow_table[idx];
@@ -80,11 +108,20 @@ static __always_inline u64 track_flow_stateful(
         st = atomic_read(&slot->tcp_state);
         if (st == 1 && is_ack && !is_syn) {
             atomic_set(&slot->tcp_state, 2);
+            atomic_set(&slot->expected_seq, (int)seq_host);
             st = 2;
         }
         *out_established = (st == 2);
-        if (has_tail)
-            prev = (u64)atomic64_xchg(&slot->prev_tail_qword, (s64)new_tail);
+        if (payload_len >= 8) {
+            u32 exp = (u32)atomic_read(&slot->expected_seq);
+            if (exp == seq_host) {
+                prev = (u64)atomic64_xchg(&slot->prev_tail_qword, (s64)new_tail);
+                atomic_set(&slot->expected_seq, (int)(seq_host + payload_len));
+            } else {
+                /* Ретрансмит или out-of-order: сбрасываем хвост склейки */
+                atomic64_set(&slot->prev_tail_qword, 0);
+            }
+        }
         return prev;
     }
 
@@ -93,9 +130,10 @@ static __always_inline u64 track_flow_stateful(
         atomic64_set(&slot->pkt_count, 1);
         atomic64_set(&slot->byte_count, pkt_len);
         atomic64_set(&slot->last_tsc, now_tsc);
-        atomic64_set(&slot->prev_tail_qword, has_tail ? (s64)new_tail : 0);
+        atomic64_set(&slot->prev_tail_qword, payload_len >= 8 ? (s64)new_tail : 0);
         st = (is_syn && !is_ack) ? 1 : 0;
         atomic_set(&slot->tcp_state, st);
+        atomic_set(&slot->expected_seq, (int)(is_syn ? (seq_host + 1) : (seq_host + payload_len)));
         *out_established = false;
         return 0;
     }
@@ -160,6 +198,7 @@ struct ring0_sentinel_slot {
     u8  promoted;
     u16 burst_strikes;
     u64 last_tsc;
+    u64 lease_expire_tsc;
 } ____cacheline_aligned;
 
 static struct ring0_sentinel_slot bot_table[64];
@@ -183,7 +222,7 @@ static __always_inline bool is_verified_l7_hello(const u8 *p, u32 len, u16 dport
 static bool sentinel_observe_and_check_ban(u32 src_ip, bool is_clean, bool session_verified, u64 now_tsc)
 {
     unsigned long flags;
-    u32 idx = (src_ip * 2654435761U) >> 26;
+    u32 idx = (u32)(siphash_1_3_u32(src_ip, epoch_salt, epoch_salt_hi) & (BOT_SLOTS - 1));
     struct ring0_sentinel_slot *slot;
     u64 delta;
     bool banned_now;
@@ -201,6 +240,11 @@ static bool sentinel_observe_and_check_ban(u32 src_ip, bool is_clean, bool sessi
     }
     delta = now_tsc - slot->last_tsc;
     slot->last_tsc = now_tsc;
+    if (slot->promoted && now_tsc > slot->lease_expire_tsc) {
+        slot->promoted = 0;
+        slot->trust_score = 0;
+        atomic64_dec(&stat_bot_wl);
+    }
 
     if (is_clean && !slot->banned) {
         if (delta < 50000ULL && ++slot->burst_strikes >= 32) {
@@ -281,7 +325,7 @@ static unsigned int zero_nf_hook(void *priv, struct sk_buff *skb, const struct n
     {
         bool est = false;
         if (skb->len <= tot) {
-            track_flow_stateful(fhash, skb->len, t0, 0, false, tcph->syn, tcph->ack, &est);
+            track_flow_stateful(fhash, skb->len, t0, 0, 0, ntohl(tcph->seq), tcph->syn, tcph->ack, &est);
             atomic64_inc(&stat_clean_pass);
             atomic64_add(rdtsc() - t0, &stat_total_cycles);
             constant_time_pad_ring0(t0);
@@ -295,7 +339,7 @@ static unsigned int zero_nf_hook(void *priv, struct sk_buff *skb, const struct n
         {
             u64 cur_head = plen >= 8 ? *(const u64 *)p : 0;
             u64 cur_tail = plen >= 8 ? *(const u64 *)(p + (plen >= 64 ? 56 : plen - 8)) : 0;
-            u64 prev_tail = track_flow_stateful(fhash, skb->len, t0, cur_tail, plen >= 8, tcph->syn, tcph->ack, &est);
+            u64 prev_tail = track_flow_stateful(fhash, skb->len, t0, cur_tail, plen, ntohl(tcph->seq), tcph->syn, tcph->ack, &est);
             u16 dport = ntohs(tcph->dest);
             bool l7_ok;
             v = inspect_l7_ring0_asm(p, plen, dport);
@@ -332,7 +376,7 @@ static int zero_proc_show(struct seq_file *m, void *v)
 {
     u64 rx = atomic64_read(&stat_rx_pkts), cyc = atomic64_read(&stat_total_cycles);
     seq_printf(m,
-        "ZEROMANI MONOLITHIC RING-0 ENGINE v2.3 (7.3.4-zen)\n"
+        "ZEROMANI MONOLITHIC RING-0 ENGINE v2.4 (7.3.4-zen)\n"
         "MODE=%s | CONST_WIN=%d | RX=%llu | PASS=%llu | DROP=%llu\n"
         "SMUGGLING=%llu | TLS_SPLIT=%llu | TLS_DOWNGRADE=%llu | TTL_ANOM=%llu | IP_FRAG=%llu | OTHER=%llu\n"
         "BOT_WL=%llu | BOT_BAN=%llu | AVG_CYCLES_PKT=%llu\n",
@@ -370,6 +414,8 @@ static int __init zero_ring0_init(void)
     u64 hw_seed = 0;
     asm volatile("rdrand %0" : "=r" (hw_seed));
     epoch_salt ^= (rdtsc() ^ hw_seed);
+    asm volatile("rdrand %0" : "=r" (hw_seed));
+    epoch_salt_hi ^= ((rdtsc() << 17) ^ hw_seed);
     for_each_possible_cpu(cpu) {
         u64 s = epoch_salt ^ ((u64)(cpu + 1) * 0x9E3779B97F4A7C15ULL);
         per_cpu(percpu_jitter_state, cpu) = s ? s : 0xCAFEBABE12345678ULL;
@@ -379,7 +425,7 @@ static int __init zero_ring0_init(void)
         remove_proc_entry("zero_timing_ring0", NULL);
         return -EINVAL;
     }
-    pr_info("zeromani_ring0: MONOLITHIC RING-0 ENGINE v2.3 LOADED!\n");
+    pr_info("zeromani_ring0: MONOLITHIC RING-0 ENGINE v2.4 LOADED!\n");
     return 0;
 }
 
@@ -387,7 +433,7 @@ static void __exit zero_ring0_exit(void)
 {
     nf_unregister_net_hook(&init_net, &zero_nf_ops);
     remove_proc_entry("zero_timing_ring0", NULL);
-    pr_info("zeromani_ring0: MONOLITHIC RING-0 ENGINE v2.3 UNLOADED.\n");
+    pr_info("zeromani_ring0: MONOLITHIC RING-0 ENGINE v2.4 UNLOADED.\n");
 }
 
 module_init(zero_ring0_init);
