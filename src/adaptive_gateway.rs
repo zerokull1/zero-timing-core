@@ -84,3 +84,130 @@ impl AdaptiveDdosGateway {
         verdict
     }}
 }
+
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct SentinelSlot {
+    pub src_ip_be: u32,
+    pub trust_score: u16,
+    pub banned: u8,
+    pub promoted: u8,
+    pub burst_strikes: u16,
+    pub _pad: u16,
+    pub last_tsc: u64,
+}
+
+/// Автономный обучаемый сторожевой бот с защитой от отравления обучения (Anti-Poisoning),
+/// защитой от вытеснения бана (Anti-Eviction) и контролем частоты всплесков (Burst Rate-Limit).
+#[repr(C, align(64))]
+pub struct OnlineSentinelBot {
+    pub slots: [SentinelSlot; 64],
+    pub learned_whitelisted: u32,
+    pub learned_banned: u32,
+    pub poison_attempts_blocked: u32,
+    pub enforce_triggered: u32,
+}
+
+impl OnlineSentinelBot {
+    pub const fn new() -> Self {
+        Self {
+            slots: [SentinelSlot {
+                src_ip_be: 0,
+                trust_score: 0,
+                banned: 0,
+                promoted: 0,
+                burst_strikes: 0,
+                _pad: 0,
+                last_tsc: 0,
+            }; 64],
+            learned_whitelisted: 0,
+            learned_banned: 0,
+            poison_attempts_blocked: 0,
+            enforce_triggered: 0,
+        }
+    }
+
+    #[inline(always)]
+    pub unsafe fn observe_and_act(
+        &mut self,
+        src_ip_be: u32,
+        is_clean: bool,
+        now_tsc: u64,
+        whitelist_map_fd: u32,
+        config_map_fd: u32,
+    ) {
+        let idx = ((src_ip_be.wrapping_mul(2654435761)) >> 26) as usize;
+        let slot = &mut self.slots[idx];
+
+        if slot.src_ip_be != src_ip_be {
+            // Anti-Eviction: не позволяем вытеснить активный бан в течение ~1 секунды (3 млрд тактов)
+            if slot.banned != 0 && now_tsc.saturating_sub(slot.last_tsc) < 3_000_000_000 {
+                self.poison_attempts_blocked += 1;
+                return;
+            }
+            *slot = SentinelSlot {
+                src_ip_be,
+                trust_score: 0,
+                banned: 0,
+                promoted: 0,
+                burst_strikes: 0,
+                _pad: 0,
+                last_tsc: now_tsc,
+            };
+        }
+
+        let delta_tsc = now_tsc.saturating_sub(slot.last_tsc);
+        slot.last_tsc = now_tsc;
+
+        if is_clean {
+            if slot.banned != 0 {
+                return;
+            }
+            // Anti-Poisoning: пулемётный флуд (< 50 000 тактов ~ 15 мкс) не даёт очков доверия и копит страйки
+            if delta_tsc < 50_000 {
+                slot.burst_strikes = slot.burst_strikes.saturating_add(1);
+                if slot.burst_strikes >= 32 {
+                    slot.banned = 1;
+                    slot.trust_score = 0;
+                    self.learned_banned += 1;
+                    self.poison_attempts_blocked += 1;
+                    if slot.promoted != 0 {
+                        slot.promoted = 0;
+                        unsafe { crate::bpf_control::whitelist_del_ipv4(whitelist_map_fd, src_ip_be); }
+                    }
+                }
+                return;
+            }
+
+            // Начисляем очко доверия только при естественном межпакетном интервале (>= 15 мс ~ 50 млн тактов)
+            if delta_tsc >= 50_000_000 {
+                slot.trust_score = slot.trust_score.saturating_add(1);
+                slot.burst_strikes = slot.burst_strikes.saturating_sub(1);
+                if slot.trust_score >= 16 && slot.promoted == 0 {
+                    slot.promoted = 1;
+                    self.learned_whitelisted += 1;
+                    unsafe { crate::bpf_control::whitelist_add_ipv4(whitelist_map_fd, src_ip_be); }
+                }
+            }
+        } else {
+            if slot.banned == 0 {
+                slot.banned = 1;
+                self.learned_banned += 1;
+                if slot.promoted != 0 {
+                    slot.promoted = 0;
+                    unsafe { crate::bpf_control::whitelist_del_ipv4(whitelist_map_fd, src_ip_be); }
+                }
+                if self.enforce_triggered == 0 {
+                    self.enforce_triggered = 1;
+                    let cfg = crate::bpf_control::ShieldConfig {
+                        mode: crate::bpf_control::ShieldMode::Enforce as u32,
+                        block_ttl_65: 1,
+                        block_ttl_129: 1,
+                    };
+                    unsafe { crate::bpf_control::set_shield_mode(config_map_fd, &cfg); }
+                }
+            }
+            slot.trust_score = 0;
+        }
+    }
+}

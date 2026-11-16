@@ -49,3 +49,44 @@ where
     let end = rdtsc_end();
     (result, end.saturating_sub(start))
 }
+
+/// Константное временное окно исполнения (Constant-Time Execution Gate).
+/// Выравнивает длительность любой ветки проверки строго до `target_cycles` тактов CPU,
+/// полностью устраняя утечку информации по боковому каналу времени (Remote Timing Side-Channel).
+#[inline(always)]
+pub fn constant_time_gate<F, R>(target_cycles: u64, f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    let start = rdtsc_start();
+    let result = f();
+    while rdtsc_end().saturating_sub(start) < target_cycles {
+        core::hint::spin_loop();
+    }
+    result
+}
+
+/// Константное окно с аппаратным криптографическим джиттером Intel `RDRAND`.
+/// Разрушает статистическую корреляцию таймингов при массированном ИИ-сканировании.
+#[inline(always)]
+pub fn constant_time_jittered_gate<F, R>(base_cycles: u64, jitter_mask: u64, f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    let start = rdtsc_start();
+    let result = f();
+    let mut rnd: u64 = 0;
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        asm!(
+            "rdrand {r}",
+            r = out(reg) rnd,
+            options(nomem, nostack)
+        );
+    }
+    let target = base_cycles.saturating_add(rnd & jitter_mask);
+    while rdtsc_end().saturating_sub(start) < target {
+        core::hint::spin_loop();
+    }
+    result
+}

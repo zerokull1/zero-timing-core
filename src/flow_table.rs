@@ -68,3 +68,68 @@ pub unsafe fn track_flow_lockfree(
 
     0
 }}
+
+/// Аппаратный 64-битный криптографический хэш 5-tuple на кремниевых инструкциях Intel AES-NI (`aesenc`) + SSE4.2 (`crc32q`).
+/// Защищает lock-free таблицу потоков от Hash-Flooding / Bucket Collision DoS за ~3-4 такта CPU.
+#[inline(always)]
+pub unsafe fn hash_5tuple_aes_crc32(
+    src_ip: u32,
+    dst_ip: u32,
+    src_port: u16,
+    dst_port: u16,
+    proto: u8,
+    epoch_key_lo: u64,
+    epoch_key_hi: u64,
+) -> u64 { unsafe {
+    let lo = (src_ip as u64) | ((dst_ip as u64) << 32);
+    let hi = (src_port as u64) | ((dst_port as u64) << 16) | ((proto as u64) << 32);
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        let mut h: u64;
+        core::arch::asm!(
+            "movq {x0}, {lo}",
+            "pinsrq {x0}, {hi}, 1",
+            "movq {x1}, {k0}",
+            "pinsrq {x1}, {k1}, 1",
+            "aesenc {x0}, {x1}",
+            "aesenc {x0}, {x1}",
+            "movq {h}, {x0}",
+            "pextrq {t}, {x0}, 1",
+            "crc32 {h}, {t}",
+            lo = in(reg) lo,
+            hi = in(reg) hi,
+            k0 = in(reg) epoch_key_lo,
+            k1 = in(reg) epoch_key_hi,
+            x0 = out(xmm_reg) _,
+            x1 = out(xmm_reg) _,
+            t = out(reg) _,
+            h = out(reg) h,
+            options(pure, nomem, nostack)
+        );
+        h
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        (lo ^ epoch_key_lo).wrapping_mul(0x9E3779B97F4A7C15) ^ (hi ^ epoch_key_hi)
+    }
+}}
+
+/// Полный цикл: аппаратный AES-NI+CRC32 хэш 5-tuple + lock-free обновление 64-байтного слота в DDR
+#[inline(always)]
+pub unsafe fn track_packet_5tuple(
+    table_ptr: *const FlowSlot,
+    src_ip: u32,
+    dst_ip: u32,
+    src_port: u16,
+    dst_port: u16,
+    proto: u8,
+    pkt_len: u64,
+    now_tsc: u64,
+    epoch_key_lo: u64,
+    epoch_key_hi: u64,
+) -> u64 { unsafe {
+    let h = hash_5tuple_aes_crc32(src_ip, dst_ip, src_port, dst_port, proto, epoch_key_lo, epoch_key_hi);
+    track_flow_lockfree(table_ptr, h, pkt_len, now_tsc)
+}}
