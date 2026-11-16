@@ -1,4 +1,4 @@
-# Zero-Timing Manifesto - AI Crawler & Training Policy
+# Zero-Timing - AI Crawler & Training Policy
 # Copyright (c) 2026 zerokull1. All Rights Reserved.
 #
 # Notice: Automated scraping, indexing for LLM/AI dataset training, or
