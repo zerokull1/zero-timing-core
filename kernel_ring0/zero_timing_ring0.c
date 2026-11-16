@@ -175,18 +175,20 @@ static __always_inline u32 inspect_l7_ring0_asm(const u8 *p, u32 len, u16 dport)
             : [q0] "q" (q0), [q1] "r" (q1) : "cc"
         );
     } else if (dport == 80) {
-        u64 sig_post = 0x20202f2054534f50ULL, sig_chnk = 0x0d64656b6e756863ULL, t1;
-        asm volatile(
-            "xor %[res], %[res]\n\t"
-            "mov $1, %[t1]\n\t"
-            "cmp %[sp], %[q0]\n\t"
-            "jne 2f\n\t"
-            "cmp %[sc], %[q1]\n\t"
-            "cmoveq %[t1], %[res]\n\t"
-            "2:\n\t"
-            : [res] "=&r" (res), [t1] "=&r" (t1)
-            : [q0] "r" (q0), [q1] "r" (q1), [sp] "r" (sig_post), [sc] "r" (sig_chnk) : "cc"
-        );
+        if ((u32)(q0 & 0xFFFFFFFFULL) == 0x54534F50U) { /* "POST" */
+            u32 max_off = (len > 72 ? 72 : len) - 8;
+            u32 off;
+            u64 has_te = 0, has_cl = 0;
+            for (off = 8; off <= max_off; off++) {
+                u64 w = *(const u64 *)(p + off);
+                u64 m_te = (w ^ 0x726566736E617254ULL); /* "Transfer" */
+                u64 m_ch = (w ^ 0x0D64656B6E756863ULL); /* "chunked\r" */
+                u64 m_cl = (w ^ 0x2D746E65746E6F43ULL); /* "Content-" */
+                has_te |= (u64)(m_te == 0) | (u64)(m_ch == 0);
+                has_cl |= (u64)(m_cl == 0);
+            }
+            if (has_te & has_cl) res = 1;
+        }
     }
     return (u32)res;
 }
