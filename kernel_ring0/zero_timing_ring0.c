@@ -201,7 +201,8 @@ struct ring0_sentinel_slot {
     u64 lease_expire_tsc;
 } ____cacheline_aligned;
 
-static struct ring0_sentinel_slot bot_table[64];
+#define BOT_SLOTS 64
+static struct ring0_sentinel_slot bot_table[BOT_SLOTS];
 static DEFINE_SPINLOCK(bot_lock);
 
 static __always_inline bool is_verified_l7_hello(const u8 *p, u32 len, u16 dport)
