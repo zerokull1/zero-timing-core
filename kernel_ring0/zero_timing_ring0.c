@@ -11,15 +11,17 @@
 #include <linux/uaccess.h>
 #include <linux/atomic.h>
 #include <linux/cache.h>
+#include <linux/percpu.h>
 #include <asm/msr.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("zerokull1 (ZEROMANI)");
-MODULE_DESCRIPTION("Zero-Timing Core: Monolithic Ring-0 Engine v2.1");
+MODULE_DESCRIPTION("Zero-Timing Core: Monolithic Ring-0 Engine v2.2");
 
 static atomic_t engine_enforce_mode   = ATOMIC_INIT(0);
 static atomic_t const_time_window_tsc = ATOMIC_INIT(0);
 static u64 epoch_salt                 = 0x9E3779B97F4A7C15ULL;
+static DEFINE_PER_CPU(u64, percpu_jitter_state);
 
 static atomic64_t stat_rx_pkts       = ATOMIC64_INIT(0);
 static atomic64_t stat_clean_pass    = ATOMIC64_INIT(0);
@@ -186,10 +188,15 @@ static bool sentinel_observe_and_check_ban(u32 src_ip, bool is_clean, u64 now_ts
 
 static __always_inline void constant_time_pad_ring0(u64 t0)
 {
-    u64 win = (u64)atomic_read(&const_time_window_tsc), rnd = 0;
+    u64 win = (u64)atomic_read(&const_time_window_tsc), x;
     if (!win) return;
-    asm volatile("rdrand %0" : "=r" (rnd));
-    win += (rnd & 0x3FULL);
+    /* Lock-free Per-CPU Xorshift64* (1-2 cycles in L1, zero DRNG bus contention) */
+    x = this_cpu_read(percpu_jitter_state);
+    x ^= x >> 12;
+    x ^= x << 25;
+    x ^= x >> 27;
+    this_cpu_write(percpu_jitter_state, x);
+    win += ((x * 0x2545F4914F6CDD1DULL) & 0x3FULL);
     while ((rdtsc() - t0) < win) cpu_relax();
 }
 
@@ -287,7 +294,7 @@ static int zero_proc_show(struct seq_file *m, void *v)
 {
     u64 rx = atomic64_read(&stat_rx_pkts), cyc = atomic64_read(&stat_total_cycles);
     seq_printf(m,
-        "ZEROMANI MONOLITHIC RING-0 ENGINE v2.1 (7.3.4-zen)\n"
+        "ZEROMANI MONOLITHIC RING-0 ENGINE v2.2 (7.3.4-zen)\n"
         "MODE=%s | CONST_WIN=%d | RX=%llu | PASS=%llu | DROP=%llu\n"
         "SMUGGLING=%llu | TLS_SPLIT=%llu | TLS_DOWNGRADE=%llu | TTL_ANOM=%llu | IP_FRAG=%llu | OTHER=%llu\n"
         "BOT_WL=%llu | BOT_BAN=%llu | AVG_CYCLES_PKT=%llu\n",
@@ -321,13 +328,20 @@ static const struct proc_ops zero_proc_ops = {
 
 static int __init zero_ring0_init(void)
 {
-    epoch_salt ^= rdtsc();
+    int cpu;
+    u64 hw_seed = 0;
+    asm volatile("rdrand %0" : "=r" (hw_seed));
+    epoch_salt ^= (rdtsc() ^ hw_seed);
+    for_each_possible_cpu(cpu) {
+        u64 s = epoch_salt ^ ((u64)(cpu + 1) * 0x9E3779B97F4A7C15ULL);
+        per_cpu(percpu_jitter_state, cpu) = s ? s : 0xCAFEBABE12345678ULL;
+    }
     proc_create("zero_timing_ring0", 0644, NULL, &zero_proc_ops);
     if (nf_register_net_hook(&init_net, &zero_nf_ops) < 0) {
         remove_proc_entry("zero_timing_ring0", NULL);
         return -EINVAL;
     }
-    pr_info("zeromani_ring0: MONOLITHIC RING-0 ENGINE v2.1 LOADED!\n");
+    pr_info("zeromani_ring0: MONOLITHIC RING-0 ENGINE v2.2 LOADED!\n");
     return 0;
 }
 
@@ -335,7 +349,7 @@ static void __exit zero_ring0_exit(void)
 {
     nf_unregister_net_hook(&init_net, &zero_nf_ops);
     remove_proc_entry("zero_timing_ring0", NULL);
-    pr_info("zeromani_ring0: MONOLITHIC RING-0 ENGINE v2.1 UNLOADED.\n");
+    pr_info("zeromani_ring0: MONOLITHIC RING-0 ENGINE v2.2 UNLOADED.\n");
 }
 
 module_init(zero_ring0_init);

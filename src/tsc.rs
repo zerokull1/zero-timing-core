@@ -75,15 +75,11 @@ where
 {
     let start = rdtsc_start();
     let result = f();
-    let mut rnd: u64 = 0;
-    #[cfg(target_arch = "x86_64")]
-    unsafe {
-        asm!(
-            "rdrand {r}",
-            r = out(reg) rnd,
-            options(nomem, nostack)
-        );
-    }
+    let mut x = start ^ 0x9E3779B97F4A7C15;
+    x ^= x >> 12;
+    x ^= x << 25;
+    x ^= x >> 27;
+    let rnd = x.wrapping_mul(0x2545F4914F6CDD1D);
     let target = base_cycles.saturating_add(rnd & jitter_mask);
     while rdtsc_end().saturating_sub(start) < target {
         core::hint::spin_loop();
