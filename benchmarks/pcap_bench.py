@@ -40,7 +40,7 @@ def read_pcap_packets(pcap_path: str, limit: int = 100_000):
         global_hdr = f.read(24)
         if len(global_hdr) < 24:
             raise ValueError("Некорректный заголовок PCAP файла")
-        magic = struct.unpack("<I", global_hdr[:4])
+        magic = struct.unpack("<I", global_hdr[:4])[0]
         endian = "<" if magic in (0xA1B2C3D4, 0xA1B23C4D) else ">"
         while len(packets) < limit:
             pkt_hdr = f.read(16)
