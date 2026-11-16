@@ -176,11 +176,12 @@ static __always_inline u32 inspect_l7_ring0_asm(const u8 *p, u32 len, u16 dport)
         );
     } else if (dport == 80) {
         if ((u32)(q0 & 0xFFFFFFFFULL) == 0x54534F50U) { /* "POST" */
-            u32 max_off = (len > 72 ? 72 : len) - 8;
+            u32 max_off = (len > 512 ? 512 : len) - 8;
             u32 off;
             u64 has_te = 0, has_cl = 0;
             for (off = 8; off <= max_off; off++) {
                 u64 w = *(const u64 *)(p + off);
+                if ((u32)(w & 0xFFFFFFFFULL) == 0x0A0D0A0DU) break; /* "\r\n\r\n" */
                 u64 m_te = (w ^ 0x726566736E617254ULL); /* "Transfer" */
                 u64 m_ch = (w ^ 0x0D64656B6E756863ULL); /* "chunked\r" */
                 u64 m_cl = (w ^ 0x2D746E65746E6F43ULL); /* "Content-" */
