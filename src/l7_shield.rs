@@ -11,6 +11,7 @@ pub enum L7Verdict {
     BlockedInvalidTlsRecord = 2,
     BlockedNullPayload = 3,
     BlockedTlsRecordSplitting = 4,
+    BlockedTlsDowngrade = 5,
 }
 
 const SIG_POST_SPACE: u64 = u64::from_le_bytes(*b"POST /  ");
@@ -33,45 +34,55 @@ pub unsafe fn inspect_l7_payload_asm(payload: *const u8, len: usize, dst_port: u
     if dst_port == 443 {
         asm!(
             "mov {q0}, qword ptr [{ptr}]",
-            "movzx {b0:e}, {q0:l}",          // rec_type = q0 & 0xFF
-            "mov {b1}, {q0}",
-            "shr {b1}, 8",
-            "movzx {b1:e}, {b1:l}",          // major_ver = (q0 >> 8) & 0xFF
-
-            // Извлекаем record_len (байты 3..5 в Big-Endian -> биты 24..40 в q0)
-            "mov {rlen}, {q0}",
-            "shr {rlen}, 24",
-            "rol {rlen:x}, 8",               // bswap16: перевод record_len из BE в LE
-
+            "mov {q1}, qword ptr [{ptr} + 8]",
             "xor {res:e}, {res:e}",
-            "mov {bad:e}, 2",                // L7Verdict::BlockedInvalidTlsRecord = 2
-            "mov {split:e}, 4",              // L7Verdict::BlockedTlsRecordSplitting = 4
 
-            // Проверка TLS Record Splitting: если rec_type == 0x16 (Handshake) И record_len < 40
-            "cmp {rlen:x}, 40",
-            "setb {is_small:l}",             // is_small = 1 если record_len < 40
-            "cmp {b0:l}, 0x16",
-            "sete {is_hs:l}",                // is_hs = 1 если Handshake (0x16)
-            "and {is_small:l}, {is_hs:l}",
-            "test {is_small:l}, {is_small:l}",
-            "cmovnz {res:e}, {split:e}",     // Если Handshake && record_len < 40 -> код 4
+            // 1) TLS ClientHello Downgrade (128-bit q0 + q1):
+            // rec_type == 0x16 && handshake_type (byte 5) == 0x01 && legacy_ver (bytes 9..10) != 0x0303 -> 5
+            "cmp {q0:l}, 0x16",
+            "sete {t2:l}",
+            "mov {t0}, {q0}",
+            "shr {t0}, 40",
+            "cmp {t0:l}, 0x01",
+            "sete {t1:l}",
+            "and {t1:l}, {t2:l}",
+            "mov {t0}, {q1}",
+            "shr {t0}, 8",
+            "cmp {t0:x}, 0x0303",
+            "setne {t0:l}",
+            "and {t1:l}, {t0:l}",
+            "mov {t0:e}, 5",
+            "test {t1:l}, {t1:l}",
+            "cmovnz {res:e}, {t0:e}",
 
-            // Проверка базовой валидности TLS: major_ver == 0x03 и rec_type in {0x16, 0x17}
-            "cmp {b1:l}, 0x03",
-            "cmovne {res:e}, {bad:e}",
-            "sub {b0:l}, 0x16",              // 0x16 -> 0, 0x17 -> 1
-            "cmp {b0:l}, 1",
-            "cmova {res:e}, {bad:e}",
+            // 2) TLS Record Splitting (высший приоритет над Downgrade, т.к. пакет обрезан < 40B):
+            // Handshake (t2:l == 1) && record_len < 40 -> 4
+            "mov {t0}, {q0}",
+            "shr {t0}, 24",
+            "rol {t0:x}, 8",
+            "cmp {t0:x}, 40",
+            "setb {t1:l}",
+            "and {t1:l}, {t2:l}",
+            "mov {t0:e}, 4",
+            "test {t1:l}, {t1:l}",
+            "cmovnz {res:e}, {t0:e}",
+
+            // 3) Базовая валидность TLS Record: major_ver == 0x03 && rec_type in {0x16, 0x17} -> else 2
+            "mov {t0:e}, 2",
+            "mov {t1}, {q0}",
+            "shr {t1}, 8",
+            "cmp {t1:l}, 0x03",
+            "cmovne {res:e}, {t0:e}",
+            "sub {q0:l}, 0x16",
+            "cmp {q0:l}, 1",
+            "cmova {res:e}, {t0:e}",
 
             ptr = in(reg) payload,
             q0 = out(reg) _,
-            b0 = out(reg) _,
-            b1 = out(reg) _,
-            rlen = out(reg) _,
-            bad = out(reg) _,
-            split = out(reg) _,
-            is_small = out(reg) _,
-            is_hs = out(reg) _,
+            q1 = out(reg) _,
+            t0 = out(reg) _,
+            t1 = out(reg) _,
+            t2 = out(reg) _,
             res = out(reg) verdict_code,
             options(readonly, nostack, pure)
         );
@@ -104,6 +115,7 @@ pub unsafe fn inspect_l7_payload_asm(payload: *const u8, len: usize, dst_port: u
         1 => L7Verdict::BlockedHttpSmuggling,
         2 => L7Verdict::BlockedInvalidTlsRecord,
         4 => L7Verdict::BlockedTlsRecordSplitting,
+        5 => L7Verdict::BlockedTlsDowngrade,
         _ => L7Verdict::BlockedNullPayload,
     }
 }}

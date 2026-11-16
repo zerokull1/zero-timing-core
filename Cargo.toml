@@ -5,6 +5,21 @@ edition = "2021"
 
 [dependencies]
 
+[lib]
+name = "zero_core_lib"
+path = "src/lib.rs"
+test = false
+
+[[bin]]
+name = "zero_project"
+path = "src/main.rs"
+test = false
+
+[[bin]]
+name = "core_self_test"
+path = "src/bin/core_self_test.rs"
+test = false
+
 [profile.release]
 opt-level = 3
 lto = true

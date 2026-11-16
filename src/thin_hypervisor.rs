@@ -112,6 +112,19 @@ impl EptPageTable {
     }
 }
 
+/// Аппаратная инвалидация EPT TLB (INVEPT Type 2: All-Context) для SMP-когерентности между сокетами
+#[inline(always)]
+pub unsafe fn invept_all_contexts() { unsafe {
+    let desc: [u64; 2] = [0, 0];
+    let inv_type: u64 = 2;
+    asm!(
+        "invept {t}, [{d}]",
+        t = in(reg) inv_type,
+        d = in(reg) desc.as_ptr(),
+        options(nostack)
+    );
+}}
+
 #[inline(always)]
 unsafe fn rdmsr(msr: u32) -> u64 { unsafe {
     let lo: u32;
@@ -199,6 +212,9 @@ pub unsafe fn detect_rack_cpu_backend() -> HypervisorBackend { unsafe {
 
 #[inline(always)]
 pub unsafe fn arm_rack_core_ring_minus_1(ctx: &mut PerCoreRackContext) -> Result<HypervisorBackend, u32> { unsafe {
+    if ctx.armed != 0 {
+        return Ok(ctx.backend);
+    }
     ctx.apic_id = current_x2apic_id();
 
     match detect_rack_cpu_backend() {
@@ -319,19 +335,57 @@ pub unsafe fn vmread(field: u64) -> u64 { unsafe {
     val
 }}
 
+/// Штатный выход ядра из Ring -1 (VMXOFF / сброс EFER.SVME) для предотвращения Triple Fault при перезагрузке
+#[inline(always)]
+pub unsafe fn disarm_rack_core_ring_minus_1(ctx: &mut PerCoreRackContext) { unsafe {
+    if ctx.armed == 0 {
+        return;
+    }
+    match ctx.backend {
+        HypervisorBackend::IntelVtxEpt => {
+            asm!("vmxoff", options(nomem, nostack));
+        }
+        HypervisorBackend::AmdSvmNpt => {
+            let efer = rdmsr(MSR_IA32_EFER) & !EFER_SVME_BIT;
+            wrmsr(MSR_IA32_EFER, efer);
+        }
+        HypervisorBackend::NoneOrRestricted => {}
+    }
+    ctx.armed = 0;
+}}
+
 /// Аппаратный Out-of-Band сброс тревоги напрямую в BMC стойки через порт IPMI KCS (0xCA2/0xCA3)
 #[inline(always)]
 pub unsafe fn trigger_bmc_ipmi_alert(violation_code: u8) { unsafe {
     asm!(
+        "mov ecx, 4096",
         "mov dx, {cmd_port}",
+        "2:",
+        "in al, dx",
+        "test al, 0x02",
+        "jz 3f",
+        "pause",
+        "loop 2b",
+        "3:",
         "mov al, 0x61",
         "out dx, al",
+        "mov ecx, 4096",
+        "4:",
+        "in al, dx",
+        "test al, 0x02",
+        "jz 5f",
+        "pause",
+        "loop 4b",
+        "5:",
         "mov dx, {data_port}",
         "mov al, {code}",
         "out dx, al",
         cmd_port = const IPMI_KCS_CMD_PORT,
         data_port = const IPMI_KCS_DATA_PORT,
         code = in(reg_byte) violation_code,
+        out("ecx") _,
+        out("edx") _,
+        out("eax") _,
         options(nomem, nostack)
     );
 }}
@@ -341,6 +395,7 @@ pub unsafe fn trigger_bmc_ipmi_alert(violation_code: u8) { unsafe {
 pub enum VmExitVerdict {
     AdvanceGuestRip       = 0,
     SecurityViolationTrap = 1,
+    SipiApicSync          = 2,
 }
 
 /// Безветвящаяся классификация причины перехвата (единая для Intel VM-Exit и AMD #VMEXIT)
@@ -391,7 +446,13 @@ pub fn classify_vmexit_branchless(backend: HypervisorBackend, exit_reason: u32) 
             }
         }
     }
-    if verdict == 1 { VmExitVerdict::SecurityViolationTrap } else { VmExitVerdict::AdvanceGuestRip }
+    if verdict == 1 {
+        VmExitVerdict::SecurityViolationTrap
+    } else if backend == HypervisorBackend::IntelVtxEpt && (basic_reason == 3 || basic_reason == 4) {
+        VmExitVerdict::SipiApicSync
+    } else {
+        VmExitVerdict::AdvanceGuestRip
+    }
 }
 
 // ============================================================================
