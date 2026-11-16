@@ -17,3 +17,28 @@
 - **Executable Footprint (`.text`):** `17.7 KB` (`11,234 B` core + `6,877 B` sealed DDR capsules) — fits entirely inside **32 KB L1 Instruction Cache** with `14.3 KB` (`44.7%`) free headroom.
 - **Hardware PMU (`RDPMC` on 10,000,000 frames):** `484.35 Mpps` (`6.80 cycles/frame`), `109` cache misses (**99.999% cache hit rate**), `737` branch mispredictions.
 - **Protocol & Evasion Coverage (`PROT_NONE` Guard-Page Verified):** HTTP/1.1, HTTP/2 Rapid Reset (`CVE-2023-44487`, `~8.4 cycles/frame`), TLS 1.3 Record Splitting, QUIC Initial (`RFC 9000`), DNS/NTP Amplification, Modbus TCP, and Contrastive SWAR/AVX2 Self-Learning (`0.00%` False Positives across 1,000,000 clean frames).
+
+## Ring-0 Linux Kernel Module (DKMS) & Zero-Syscall Telemetry (`zero_top`)
+
+The monolithic Ring-0 kernel engine (`kernel_ring0/zero_timing_ring0.c`) provides inline `NF_INET_PRE_ROUTING` packet inspection with branchless `x86_64` ASM L7 DPI, lock-free `SSE4.2 CRC32C` flow tracking, constant-time `RDTSC + RDRAND` gating, and an anti-poisoning sentinel bot.
+
+### 1. DKMS Kernel Module Installation
+```bash
+sudo mkdir -p /usr/src/zero-timing-ring0-2.0
+sudo cp kernel_ring0/* /usr/src/zero-timing-ring0-2.0/
+sudo dkms add -m zero-timing-ring0 -v 2.0
+sudo dkms build -m zero-timing-ring0 -v 2.0
+sudo dkms install -m zero-timing-ring0 -v 2.0
+sudo modprobe zero_timing_ring0
+```
+
+### 2. Live Ring-0 Control (`/proc/zero_timing_ring0`) & `zero_top`
+```bash
+# Switch between Monitor (Fail-Safe) and Enforce (NF_DROP) modes:
+echo enforce | sudo tee /proc/zero_timing_ring0
+echo const256 | sudo tee /proc/zero_timing_ring0
+
+# Build and run the no_std/no_main live telemetry reader:
+cargo build --release --bin zero_top
+./target/release/zero_top
+```

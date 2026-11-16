@@ -31,3 +31,28 @@ flowchart TD
 - **Вес исполняемого кода (`.text`):** `17.7 КБ` (`11 234 Б` ядро + `6 877 Б` запечатанные DDR-капсулы) — целиком помещается в **32 КБ L1 Instruction Cache** с чистым запасом `14.3 КБ` (`44.7%`).
 - **Аппаратный профайлер PMU (`RDPMC` на 10 000 000 кадров):** `484.35 млн кадров/с` (`6.80 такта/кадр`), всего `109` промахов кэша (**99.999% попаданий в кэш**), `737` ошибок предсказания ветвлений.
 - **Закрытые протоколы и векторы обхода (проверено под `mprotect(PROT_NONE)`):** HTTP/1.1, HTTP/2 Rapid Reset (`CVE-2023-44487`, `~8.4 такта/кадр`), TLS 1.3 Record Splitting, QUIC Initial (`RFC 9000`), DNS/NTP Amplification, Modbus TCP, а также контрастное самообучение SWAR/AVX2 (`0.00%` ложных срабатываний на 1 000 000 легитимных кадров).
+
+## Модуль ядра Linux Ring-0 (DKMS) и Zero-Syscall телеметрия (`zero_top`)
+
+Монолитный движок ядра (`kernel_ring0/zero_timing_ring0.c`) выполняет перехват пакетов на уровне `NF_INET_PRE_ROUTING` с безветвящимся `x86_64` ASM L7 DPI, lock-free таблицей потоков на аппаратном `SSE4.2 CRC32C`, константным окном времени `RDTSC + RDRAND` и обучаемым сторожевым ботом с защитой от отравления (`Anti-Poisoning`).
+
+### 1. Установка модуля ядра через DKMS
+```bash
+sudo mkdir -p /usr/src/zero-timing-ring0-2.0
+sudo cp kernel_ring0/* /usr/src/zero-timing-ring0-2.0/
+sudo dkms add -m zero-timing-ring0 -v 2.0
+sudo dkms build -m zero-timing-ring0 -v 2.0
+sudo dkms install -m zero-timing-ring0 -v 2.0
+sudo modprobe zero_timing_ring0
+```
+
+### 2. Управление Ring-0 (`/proc/zero_timing_ring0`) и запуск `zero_top`
+```bash
+# Переключение между безопасным режимом Monitor и жёсткой блокировкой Enforce (NF_DROP):
+echo enforce | sudo tee /proc/zero_timing_ring0
+echo const256 | sudo tee /proc/zero_timing_ring0
+
+# Сборка и запуск автономного no_std/no_main монитора телеметрии:
+cargo build --release --bin zero_top
+./target/release/zero_top
+```
