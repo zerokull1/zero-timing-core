@@ -42,6 +42,7 @@ mod runtime_guard;
 mod hash_gate;
 mod ttl_guard;
 mod anti_tethering;
+mod telemetry_shm;
 
 use core::arch::asm;
 #[cfg(not(test))]
