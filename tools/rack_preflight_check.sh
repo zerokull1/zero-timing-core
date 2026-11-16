@@ -1,12 +1,23 @@
 #!/usr/bin/env bash
 # ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 # Zero-Timing Core: Экспресс-приёмка и диагностика Dell PowerEdge R730 (Bare-Metal)
+# Использование:
+#   sudo ./tools/rack_preflight_check.sh           # полная аппаратная диагностика
+#   sudo ./tools/rack_preflight_check.sh --stress  # диагностика + 60с стресс-тест CPU/MCE
+#   sudo ./tools/rack_preflight_check.sh --quiet   # перевести кулеры iDRAC в тихий режим (18%)
 set -euo pipefail
 
 if [[ $EUID -ne 0 ]]; then
   echo "[!] Запустите с правами root: sudo $0"
   exit 1
 fi
+
+DO_STRESS=0
+DO_QUIET=0
+for arg in "$@"; do
+  [[ "$arg" == "--stress" ]] && DO_STRESS=1
+  [[ "$arg" == "--quiet" ]] && DO_QUIET=1
+done
 
 echo "======================================================================"
 echo " ZERO-TIMING CORE — ЭКСПРЕСС-ДИАГНОСТИКА СТОЙКИ DELL POWEREDGE R730"
@@ -40,21 +51,31 @@ dmidecode -t memory | awk '
 echo "--- NUMA Топология ---"
 numactl --hardware | grep -E "available:|node [0-9]+ cpus:|node [0-9]+ size:|node [0-9]+ free:"
 
-echo -e "\n[3] ШИНА PCIe, NUMA-ПРИВЯЗКА СЛОТОВ И УСКОРИТЕЛИ (X520-DA2 / TESLA P40)"
-for dev in $(lspci -D | grep -iE "82599|X520|NVIDIA|Tesla" | awk '{print $1}'); do
+echo -e "\n[3] ШИНА PCIe (LnkCap vs LnkSta), NUMA-СЛОТЫ И УСКОРИТЕЛИ"
+for dev in $(lspci -D | grep -iE "82599|X520|NVIDIA|Tesla|PERC|MegaRAID" | awk '{print $1}'); do
   NODE=$(cat "/sys/bus/pci/devices/$dev/numa_node" 2>/dev/null || echo "-1")
   DESC=$(lspci -s "$dev" | cut -d' ' -f2-)
+  CAP=$(lspci -vv -s "$dev" 2>/dev/null | grep "LnkCap:" | head -n1 | sed 's/^[[:space:]]*//')
   LNK=$(lspci -vv -s "$dev" 2>/dev/null | grep "LnkSta:" | head -n1 | sed 's/^[[:space:]]*//')
   echo "PCIe $dev [NUMA Node: $NODE] -> $DESC"
-  echo "     $LNK"
+  [[ -n "$CAP" ]] && echo "     $CAP"
+  [[ -n "$LNK" ]] && echo "     $LNK"
 done
+
+AER_ERR=$(dmesg | grep -iE "pcieport.*error|AER:|Uncorrected|Corrected" | tail -n 5 || true)
+if [[ -n "$AER_ERR" ]]; then
+  echo "[!] Обнаружены ошибки шины PCIe AER в dmesg:"
+  echo "$AER_ERR"
+else
+  echo "Ошибки шины PCIe AER: не обнаружены [OK]"
+fi
 
 if command -v nvidia-smi &>/dev/null; then
   echo "--- Статус NVIDIA GPU ---"
   nvidia-smi --query-gpu=name,pci.bus_id,memory.total,temperature.gpu,pstate --format=csv,noheader || echo "[!] GPU не инициализирована"
 fi
 
-echo -e "\n[4] СЕТЕВЫЕ ПОРТЫ 10GbE (IXGBE / XDP_DRV)"
+echo -e "\n[4] СЕТЕВЫЕ ПОРТЫ 10GbE (IXGBE / XDP_DRV) И SFP+ МОДУЛИ"
 for iface in /sys/class/net/*; do
   NAME=$(basename "$iface")
   [[ "$NAME" == "lo" ]] && continue
@@ -64,28 +85,54 @@ for iface in /sys/class/net/*; do
     NUMA=$(cat "$iface/device/numa_node" 2>/dev/null || echo "-1")
     echo "NIC $NAME (driver: $DRV, state: $STATE, NUMA Node: $NUMA)"
     ethtool -l "$NAME" 2>/dev/null | grep -E "Combined:" || true
+    ethtool -m "$NAME" 2>/dev/null | grep -E "Identifier|Vendor name|Vendor PN|Laser wavelength|Module temperature" || true
   fi
 done
 
-echo -e "\n[5] BMC / iDRAC: ПРОВЕРКА ОШИБОК ECC И ТИХИЙ ПРОФИЛЬ КУЛЕРОВ (18%)"
+echo -e "\n[5] BMC / iDRAC: ECC, БЛОКИ ПИТАНИЯ (PSU), БАТАРЕЯ RAID И ТЕМПЕРАТУРЫ"
 modprobe ipmi_devintf 2>/dev/null || true
 modprobe ipmi_si 2>/dev/null || true
 if command -v ipmitool &>/dev/null && ipmitool mc info &>/dev/null; then
   echo "iDRAC BMC связь    : OK"
-  ECC_ERR=$(ipmitool sel list 2>/dev/null | grep -iE "ECC|Memory|Voltage|Critical" | tail -n 5 || true)
+  ECC_ERR=$(ipmitool sel list 2>/dev/null | grep -iE "ECC|Memory|Voltage|Critical|CPU|Fan" | tail -n 8 || true)
   if [[ -n "$ECC_ERR" ]]; then
     echo "[!] Найдены записи в журнале SEL iDRAC:"
     echo "$ECC_ERR"
   else
-    echo "Журнал SEL (ECC)   : критических ошибок памяти не обнаружено [OK]"
+    echo "Журнал SEL (ECC)   : критических ошибок не обнаружено [OK]"
   fi
-  echo "Отключаем разгон кулеров под сторонние PCIe-карты и ставим 18% PWM..."
-  ipmitool raw 0x30 0xce 0x00 0x16 0x05 0x00 0x00 0x00 0x05 0x00 0x01 0x00 0x00 &>/dev/null || true
-  ipmitool raw 0x30 0x30 0x01 0x00 &>/dev/null || true
-  ipmitool raw 0x30 0x30 0x02 0xff 0x12 &>/dev/null || true
+  echo "--- Блоки питания (PSU) и батарейка RAID ---"
+  ipmitool sdr type "Power Supply" 2>/dev/null || true
+  ipmitool sdr type "Battery" 2>/dev/null || true
+  echo "--- Датчики температуры ---"
   ipmitool sdr type Temperature 2>/dev/null | grep -E "Inlet|Exhaust|Temp" | head -n 6 || true
+
+  if [[ $DO_QUIET -eq 1 ]]; then
+    echo "Включаем тихий профиль кулеров iDRAC (18% PWM)..."
+    ipmitool raw 0x30 0xce 0x00 0x16 0x05 0x00 0x00 0x00 0x05 0x00 0x01 0x00 0x00 &>/dev/null || true
+    ipmitool raw 0x30 0x30 0x01 0x00 &>/dev/null || true
+    ipmitool raw 0x30 0x30 0x02 0xff 0x12 &>/dev/null || true
+  fi
 else
   echo "[!] IPMI недоступен (проверьте модули ipmi_si или настройки iDRAC)"
+fi
+
+if [[ $DO_STRESS -eq 1 ]]; then
+  echo -e "\n[6] ЭКСПРЕСС-ПРОГРЕВ CPU (60 СЕКУНД) И КОНТРОЛЬ MCE"
+  if command -v stress-ng &>/dev/null; then
+    stress-ng --cpu 0 --timeout 60s --metrics-brief
+  else
+    echo "[!] Утилита stress-ng не установлена, запускаю встроенный прогрев на 60с..."
+    timeout 60s bash -c 'for i in $(seq 1 $(nproc)); do while :; do :; done & done; wait' || true
+  fi
+  MCE_ERR=$(dmesg | grep -iE "mce:|Machine check|throttl" | tail -n 5 || true)
+  if [[ -n "$MCE_ERR" ]]; then
+    echo "[!] Обнаружены MCE / троттлинг после нагрузки:"
+    echo "$MCE_ERR"
+  else
+    echo "Контроль MCE / троттлинг: чисто [OK]"
+  fi
+  ipmitool sdr type Temperature 2>/dev/null | grep -E "Inlet|Exhaust|Temp" | head -n 6 || true
 fi
 
 echo -e "\n======================================================================"
