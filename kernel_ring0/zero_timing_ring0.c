@@ -15,7 +15,7 @@
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("zerokull1 (ZEROMANI)");
-MODULE_DESCRIPTION("Zero-Timing Core: Monolithic Ring-0 Engine v2.0");
+MODULE_DESCRIPTION("Zero-Timing Core: Monolithic Ring-0 Engine v2.1");
 
 static atomic_t engine_enforce_mode   = ATOMIC_INIT(0);
 static atomic_t const_time_window_tsc = ATOMIC_INIT(0);
@@ -28,6 +28,7 @@ static atomic64_t stat_smuggling     = ATOMIC64_INIT(0);
 static atomic64_t stat_tls_split     = ATOMIC64_INIT(0);
 static atomic64_t stat_tls_downgrade = ATOMIC64_INIT(0);
 static atomic64_t stat_ttl_anomaly   = ATOMIC64_INIT(0);
+static atomic64_t stat_ip_frag       = ATOMIC64_INIT(0);
 static atomic64_t stat_other_blocked = ATOMIC64_INIT(0);
 static atomic64_t stat_bot_wl        = ATOMIC64_INIT(0);
 static atomic64_t stat_bot_ban       = ATOMIC64_INIT(0);
@@ -39,6 +40,7 @@ struct ring0_flow_slot {
     atomic64_t pkt_count;
     atomic64_t byte_count;
     atomic64_t last_tsc;
+    atomic64_t prev_tail_qword;
 } ____cacheline_aligned;
 
 static struct ring0_flow_slot flow_table[FLOW_BUCKETS];
@@ -58,23 +60,28 @@ static __always_inline u64 hash_5tuple_ring0_hw(u32 saddr, u32 daddr, u16 sport,
     return h ^ (h >> 33);
 }
 
-static __always_inline void track_flow_ring0_lockfree(u64 fhash, u64 pkt_len, u64 now_tsc)
+static __always_inline u64 track_flow_and_swap_tail(u64 fhash, u64 pkt_len, u64 now_tsc, u64 new_tail, bool has_tail)
 {
     u32 idx = (u32)(fhash & (FLOW_BUCKETS - 1));
     struct ring0_flow_slot *slot = &flow_table[idx];
     s64 cur = atomic64_read(&slot->flow_hash);
+    u64 prev = 0;
     if ((u64)cur == fhash) {
         atomic64_inc(&slot->pkt_count);
         atomic64_add(pkt_len, &slot->byte_count);
         atomic64_set(&slot->last_tsc, now_tsc);
-        return;
+        if (has_tail)
+            prev = (u64)atomic64_xchg(&slot->prev_tail_qword, (s64)new_tail);
+        return prev;
     }
     if ((cur == 0 || (now_tsc - (u64)atomic64_read(&slot->last_tsc)) > 3000000000ULL) &&
         atomic64_cmpxchg(&slot->flow_hash, cur, (s64)fhash) == cur) {
         atomic64_set(&slot->pkt_count, 1);
         atomic64_set(&slot->byte_count, pkt_len);
         atomic64_set(&slot->last_tsc, now_tsc);
+        atomic64_set(&slot->prev_tail_qword, has_tail ? (s64)new_tail : 0);
     }
+    return 0;
 }
 
 static __always_inline u32 inspect_l7_ring0_asm(const u8 *p, u32 len, u16 dport)
@@ -208,6 +215,15 @@ static unsigned int zero_nf_hook(void *priv, struct sk_buff *skb, const struct n
         return NF_ACCEPT;
     }
 
+    if (ntohs(iph->frag_off) & 0x3FFF) {
+        atomic64_inc(&stat_ip_frag);
+        sentinel_observe_and_check_ban(iph->saddr, false, t0);
+        atomic64_add(rdtsc() - t0, &stat_total_cycles);
+        constant_time_pad_ring0(t0);
+        if (atomic_read(&engine_enforce_mode)) { atomic64_inc(&stat_dropped_pkts); return NF_DROP; }
+        return NF_ACCEPT;
+    }
+
     if (iph->protocol != IPPROTO_TCP) {
         atomic64_inc(&stat_clean_pass);
         atomic64_add(rdtsc() - t0, &stat_total_cycles);
@@ -222,9 +238,9 @@ static unsigned int zero_nf_hook(void *priv, struct sk_buff *skb, const struct n
     tot = ihl + thl;
 
     fhash = hash_5tuple_ring0_hw(iph->saddr, iph->daddr, tcph->source, tcph->dest, iph->protocol);
-    track_flow_ring0_lockfree(fhash, skb->len, t0);
 
     if (skb->len <= tot) {
+        track_flow_and_swap_tail(fhash, skb->len, t0, 0, false);
         atomic64_inc(&stat_clean_pass);
         atomic64_add(rdtsc() - t0, &stat_total_cycles);
         constant_time_pad_ring0(t0);
@@ -235,7 +251,16 @@ static unsigned int zero_nf_hook(void *priv, struct sk_buff *skb, const struct n
     p = skb_header_pointer(skb, tot, plen < 64 ? plen : 64, buf);
     if (!p) return NF_ACCEPT;
 
-    v = inspect_l7_ring0_asm(p, plen, ntohs(tcph->dest));
+    {
+        u64 cur_head = plen >= 8 ? *(const u64 *)p : 0;
+        u64 cur_tail = plen >= 8 ? *(const u64 *)(p + (plen >= 64 ? 56 : plen - 8)) : 0;
+        u64 prev_tail = track_flow_and_swap_tail(fhash, skb->len, t0, cur_tail, plen >= 8);
+        v = inspect_l7_ring0_asm(p, plen, ntohs(tcph->dest));
+        if (v == 0 && prev_tail != 0 && cur_head != 0) {
+            u64 stitched[2] = { prev_tail, cur_head };
+            v = inspect_l7_ring0_asm((const u8 *)stitched, 16, ntohs(tcph->dest));
+        }
+    }
     ban = sentinel_observe_and_check_ban(iph->saddr, v == 0, t0);
 
     if (v == 0) atomic64_inc(&stat_clean_pass);
@@ -262,14 +287,14 @@ static int zero_proc_show(struct seq_file *m, void *v)
 {
     u64 rx = atomic64_read(&stat_rx_pkts), cyc = atomic64_read(&stat_total_cycles);
     seq_printf(m,
-        "ZEROMANI MONOLITHIC RING-0 ENGINE v2.0 (7.3.4-zen)\n"
+        "ZEROMANI MONOLITHIC RING-0 ENGINE v2.1 (7.3.4-zen)\n"
         "MODE=%s | CONST_WIN=%d | RX=%llu | PASS=%llu | DROP=%llu\n"
-        "SMUGGLING=%llu | TLS_SPLIT=%llu | TLS_DOWNGRADE=%llu | TTL_ANOM=%llu | OTHER=%llu\n"
+        "SMUGGLING=%llu | TLS_SPLIT=%llu | TLS_DOWNGRADE=%llu | TTL_ANOM=%llu | IP_FRAG=%llu | OTHER=%llu\n"
         "BOT_WL=%llu | BOT_BAN=%llu | AVG_CYCLES_PKT=%llu\n",
         atomic_read(&engine_enforce_mode) ? "ENFORCE" : "MONITOR", atomic_read(&const_time_window_tsc),
         rx, (u64)atomic64_read(&stat_clean_pass), (u64)atomic64_read(&stat_dropped_pkts),
         (u64)atomic64_read(&stat_smuggling), (u64)atomic64_read(&stat_tls_split),
-        (u64)atomic64_read(&stat_tls_downgrade), (u64)atomic64_read(&stat_ttl_anomaly),
+        (u64)atomic64_read(&stat_tls_downgrade), (u64)atomic64_read(&stat_ttl_anomaly), (u64)atomic64_read(&stat_ip_frag),
         (u64)atomic64_read(&stat_other_blocked), (u64)atomic64_read(&stat_bot_wl),
         (u64)atomic64_read(&stat_bot_ban), rx > 0 ? (cyc / rx) : 0);
     return 0;
@@ -302,7 +327,7 @@ static int __init zero_ring0_init(void)
         remove_proc_entry("zero_timing_ring0", NULL);
         return -EINVAL;
     }
-    pr_info("zeromani_ring0: MONOLITHIC RING-0 ENGINE v2.0 LOADED!\n");
+    pr_info("zeromani_ring0: MONOLITHIC RING-0 ENGINE v2.1 LOADED!\n");
     return 0;
 }
 
@@ -310,7 +335,7 @@ static void __exit zero_ring0_exit(void)
 {
     nf_unregister_net_hook(&init_net, &zero_nf_ops);
     remove_proc_entry("zero_timing_ring0", NULL);
-    pr_info("zeromani_ring0: MONOLITHIC RING-0 ENGINE v2.0 UNLOADED.\n");
+    pr_info("zeromani_ring0: MONOLITHIC RING-0 ENGINE v2.1 UNLOADED.\n");
 }
 
 module_init(zero_ring0_init);
