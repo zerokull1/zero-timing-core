@@ -8,6 +8,7 @@
 
 pub mod nic_driver;
 pub mod core_proto_engine;
+mod cpu_simd_dispatch;
 mod tsc;
 #[allow(dead_code)]
 mod bpf_control;
