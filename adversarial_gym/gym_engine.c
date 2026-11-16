@@ -90,7 +90,7 @@ void save_rules(const char *path) {
 
 int adaptive_shield_inspect(const uint8_t *pkt, size_t len, uint64_t ts) {
     int base_verdict = zero_cisco_inspect_frame(pkt, len, ts);
-    if (base_verdict != 0) return base_verdict;
+    if (base_verdict != 1) return base_verdict;
 
     for (size_t i = 0; i < rule_count; i++) {
         learned_rule_t *r = rule_db + i;
@@ -191,7 +191,7 @@ int main() {
             generate_mutated_attack(pkt, &len, &seed, gen, &mut_off);
 
             int v = adaptive_shield_inspect(pkt, len, (uint64_t)(gen * 10000 + i));
-            if (v != 0) {
+            if (v != 1) {
                 blocked_learned++;
             } else {
                 bypassed++;

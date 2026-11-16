@@ -75,7 +75,7 @@ int check_false_positive(uint16_t offset, uint16_t min_len, uint64_t mask, uint6
 
 int adaptive_shield_inspect(const uint8_t *pkt, size_t len, uint64_t ts) {
     int base_verdict = zero_cisco_inspect_frame(pkt, len, ts);
-    if (base_verdict != 0) return base_verdict;
+    if (base_verdict != 1) return base_verdict;
 
     for (size_t i = 0; i < rule_count; i++) {
         learned_rule_t *r = rule_db + i;
@@ -88,7 +88,7 @@ int adaptive_shield_inspect(const uint8_t *pkt, size_t len, uint64_t ts) {
             }
         }
     }
-    return 0;
+    return 1;
 }
 
 // Умный синтезатор с XOR-обобщением: вычисляет мутирующие биты и вычитает их из маски!
@@ -210,7 +210,7 @@ int main() {
         int v = adaptive_shield_inspect(pkt, len, total_pkts);
         total_pkts++;
 
-        if (v != 0) {
+        if (v != 1) {
             clean_streak++;
         } else {
             total_breaches++;
@@ -229,7 +229,7 @@ int main() {
 
     int fp = 0;
     for (int b = 0; b < BENIGN_COUNT; b++) {
-        if (adaptive_shield_inspect(benign_pkt(b), *(benign_lens + b), 999999) != 0) fp++;
+        if (adaptive_shield_inspect(benign_pkt(b), *(benign_lens + b), 999999) != 1) fp++;
     }
 
     FILE *f = fopen("adversarial_gym/battle_rules.bin", "wb");

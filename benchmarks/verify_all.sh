@@ -43,7 +43,7 @@ VAULT_SIZE=$(du -h zero-vault/target/release/zero-vault | cut -f1)
 echo "  -> [OK] Zero-Vault built ($VAULT_SIZE) with active YMM15 register binding."
 
 echo "[6/6] Running Offline C-ABI Packet Replay Benchmark (10,000 pkts)..."
-python3 tools/pcap_bench.py --count 10000 | grep -E "Total Wall Time|Latency p50|DROP|DECEPTION_TRAP"
+python3 benchmarks/pcap_bench.py --count 10000 | grep -E "Total Wall Time|Latency p50|DROP|DECEPTION_TRAP"
 
 echo "============================================================"
 echo "  ALL SYSTEM CHECKS PASSED SUCCESSFULLY!"
