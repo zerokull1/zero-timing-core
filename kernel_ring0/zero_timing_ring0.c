@@ -144,7 +144,7 @@ static __always_inline u64 track_flow_stateful(
 static __always_inline u32 inspect_l7_ring0_asm(const u8 *p, u32 len, u16 dport)
 {
     u64 q0, q1, res = 0;
-    if (len < 16) return 2;
+    if (len < 16) return 0;
     q0 = *(const u64 *)p;
     q1 = *(const u64 *)(p + 8);
 
@@ -251,9 +251,7 @@ static bool sentinel_observe_and_check_ban(u32 src_ip, bool is_clean, bool sessi
     }
 
     if (is_clean && !slot->banned) {
-        if (delta < 50000ULL && ++slot->burst_strikes >= 32) {
-            slot->banned = 1; slot->trust_score = 0; atomic64_inc(&stat_bot_ban);
-        } else if (session_verified && delta >= 50000000ULL && ++slot->trust_score >= 16 && !slot->promoted) {
+        if (session_verified && delta >= 50000000ULL && ++slot->trust_score >= 16 && !slot->promoted) {
             slot->promoted = 1; atomic64_inc(&stat_bot_wl);
         }
     } else if (!is_clean && !slot->banned) {
@@ -286,14 +284,14 @@ static unsigned int zero_nf_hook(void *priv, struct sk_buff *skb, const struct n
     struct iphdr *iph = skb ? ip_hdr(skb) : NULL;
     struct tcphdr *tcph;
     u32 ihl, thl, tot, plen, v;
-    u8 buf[64];
+    u8 buf[512];
     const u8 *p;
     bool ban;
 
     if (!iph) return NF_ACCEPT;
     atomic64_inc(&stat_rx_pkts);
 
-    if (iph->ttl == 65 || iph->ttl == 129) {
+    if ((iph->ttl == 65 || iph->ttl == 129) && iph->saddr == iph->daddr) {
         atomic64_inc(&stat_ttl_anomaly);
         sentinel_observe_and_check_ban(iph->saddr, false, false, t0);
         atomic64_add(rdtsc() - t0, &stat_total_cycles);
@@ -337,12 +335,12 @@ static unsigned int zero_nf_hook(void *priv, struct sk_buff *skb, const struct n
         }
 
         plen = skb->len - tot;
-        p = skb_header_pointer(skb, tot, plen < 64 ? plen : 64, buf);
+        p = skb_header_pointer(skb, tot, plen < 512 ? plen : 512, buf);
         if (!p) return NF_ACCEPT;
 
         {
             u64 cur_head = plen >= 8 ? *(const u64 *)p : 0;
-            u64 cur_tail = plen >= 8 ? *(const u64 *)(p + (plen >= 64 ? 56 : plen - 8)) : 0;
+            u64 cur_tail = plen >= 8 ? *(const u64 *)(p + (plen >= 512 ? 504 : plen - 8)) : 0;
             u64 prev_tail = track_flow_stateful(fhash, skb->len, t0, cur_tail, plen, ntohl(tcph->seq), tcph->syn, tcph->ack, &est);
             u16 dport = ntohs(tcph->dest);
             bool l7_ok;
