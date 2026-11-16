@@ -6,6 +6,11 @@ use core::ptr::read_unaligned;
 /// Единый безветвящийся инспектор 9 протоколов в #![no_std] ядре (HTTP/2, Modbus, DNS, NTP, SMBv3, SSH-2, BGP/VXLAN, LDAP/KRB, RoCEv2)
 #[no_mangle]
 pub unsafe extern "C" fn zero_core_inspect_proto_l7(dport: u16, ptr: *const u8, len: usize) -> u32 {
+    unsafe { zero_core_inspect_proto_l7_ports(0, dport, ptr, len) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zero_core_inspect_proto_l7_ports(sport: u16, dport: u16, ptr: *const u8, len: usize) -> u32 {
     if len < 12 || ptr.is_null() {
         return 1;
     }
@@ -14,6 +19,18 @@ pub unsafe extern "C" fn zero_core_inspect_proto_l7(dport: u16, ptr: *const u8, 
         let q1: u64 = if len >= 16 { read_unaligned(ptr.add(8) as *const u64) } else { 0 };
         let mut drop: u32 = 0;
         let one: u32 = 1;
+
+        if sport == 53 {
+            let flags_hi = (q0 >> 16) as u8;
+            let ancount = u16::from_be((q0 >> 48) as u16);
+            asm!("test {fh}, 0x80\n\tcmovne {d:e}, {one:e}\n\tcmp {an:x}, 8\n\tcmova {d:e}, {one:e}",
+                 d = inout(reg) drop, fh = in(reg_byte) flags_hi, an = in(reg) ancount, one = in(reg) one, options(pure, nomem, nostack));
+        }
+        if sport == 123 {
+            let mode = (q0 & 0x07) as u8;
+            asm!("cmp {m}, 6\n\tcmovae {d:e}, {one:e}",
+                 d = inout(reg) drop, m = in(reg_byte) mode, one = in(reg) one, options(pure, nomem, nostack));
+        }
 
         match dport {
             443 | 8080 => {
@@ -70,5 +87,46 @@ pub unsafe extern "C" fn zero_core_inspect_proto_l7(dport: u16, ptr: *const u8, 
             _ => {}
         }
         drop
+    }
+}
+
+/// Всеядный батч-инспектор (пачки до 64 кадров + упреждающий x86_64 prefetcht0 на +4 пакета без ветвлений)
+#[no_mangle]
+pub unsafe extern "C" fn zero_core_inspect_proto_l7_batch(
+    sports: *const u16,
+    dports: *const u16,
+    ptrs: *const *const u8,
+    lens: *const usize,
+    verdicts: *mut u32,
+    count: usize,
+) -> usize {
+    if count == 0 || dports.is_null() || ptrs.is_null() || lens.is_null() || verdicts.is_null() {
+        return 0;
+    }
+    unsafe {
+        let mut blocked: usize = 0;
+        let mut base: usize = 0;
+        while base < count {
+            let chunk = if count - base > 64 { 64 } else { count - base };
+            let mut i: usize = 0;
+            while i < chunk {
+                let cur = base + i;
+                let pf_idx = if i + 4 < chunk { cur + 4 } else { cur };
+                let pf_ptr = *ptrs.add(pf_idx);
+                if !pf_ptr.is_null() {
+                    asm!("prefetcht0 [{}]", in(reg) pf_ptr, options(readonly, nostack, preserves_flags));
+                }
+                let sp = if sports.is_null() { 0 } else { *sports.add(cur) };
+                let dp = *dports.add(cur);
+                let p = *ptrs.add(cur);
+                let l = *lens.add(cur);
+                let v = zero_core_inspect_proto_l7_ports(sp, dp, p, l);
+                *verdicts.add(cur) = v;
+                blocked += (v != 0) as usize;
+                i += 1;
+            }
+            base += chunk;
+        }
+        blocked
     }
 }
