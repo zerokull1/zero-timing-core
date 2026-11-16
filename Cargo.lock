@@ -3,5 +3,12 @@
 version = 4
 
 [[package]]
+name = "zero_hal"
+version = "1.0.0"
+
+[[package]]
 name = "zero_project"
 version = "0.1.0"
+dependencies = [
+ "zero_hal",
+]

@@ -1,0 +1,14 @@
+# ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
+[package]
+name = "zero_hal"
+version = "1.0.0"
+edition = "2021"
+license = "GPL-3.0"
+description = "Zero-Timing Core Hardware Abstraction Layer: NUMA 2MB HugePages, W^X Sealed DDR Arena, YMM15 Vault, io_uring & Constant-Time TSC"
+
+[dependencies]
+
+[lib]
+name = "zero_hal"
+path = "src/lib.rs"
+test = false

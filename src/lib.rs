@@ -2,6 +2,7 @@
 #![no_std]
 #![deny(unsafe_op_in_unsafe_fn)]
 
+pub extern crate zero_hal;
 pub mod tsc;
 pub mod l7_shield;
 pub mod thin_hypervisor;
