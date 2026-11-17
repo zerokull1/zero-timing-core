@@ -13,3 +13,4 @@ zero_tick_dispatcher
 
 zbuild
 zcheck
+*.ko

@@ -287,13 +287,15 @@ static unsigned int zero_nf_hook(void *priv, struct sk_buff *skb, const struct n
     struct iphdr *iph;
     struct tcphdr *tcph;
     u32 ihl, thl, tot, plen, v;
-    u8 buf[512];
+    u8 buf[128] __aligned(64);
     const u8 *p;
     bool ban;
 
-    if (!skb || !pskb_may_pull(skb, sizeof(struct iphdr))) return NF_ACCEPT;
+    if (unlikely(!skb || skb_headlen(skb) < sizeof(struct iphdr))) {
+        if (!skb || !pskb_may_pull(skb, sizeof(struct iphdr))) return NF_ACCEPT;
+    }
     iph = ip_hdr(skb);
-    if (!iph) return NF_ACCEPT;
+    if (unlikely(!iph)) return NF_ACCEPT;
     atomic64_inc(&stat_rx_pkts);
 
     if ((iph->ttl == 65 || iph->ttl == 129) && iph->saddr == iph->daddr) {
@@ -342,16 +344,16 @@ static unsigned int zero_nf_hook(void *priv, struct sk_buff *skb, const struct n
         }
 
         plen = skb->len - tot;
-        p = skb_header_pointer(skb, tot, plen < 512 ? plen : 512, buf);
+        p = skb_header_pointer(skb, tot, plen < 128 ? plen : 128, buf);
         if (!p) return NF_ACCEPT;
 
         {
             u64 cur_head = plen >= 8 ? *(const u64 *)p : 0;
-            u64 cur_tail = plen >= 8 ? *(const u64 *)(p + (plen >= 512 ? 504 : plen - 8)) : 0;
+            u64 cur_tail = plen >= 8 ? *(const u64 *)(p + (plen >= 128 ? 120 : plen - 8)) : 0;
             u64 prev_tail = track_flow_stateful(fhash, skb->len, t0, cur_tail, plen, ntohl(tcph->seq), tcph->syn, tcph->ack, &est);
             u16 dport = ntohs(tcph->dest);
             bool l7_ok;
-            v = inspect_l7_ring0_asm(p, plen < 512 ? plen : 512, dport);
+            v = inspect_l7_ring0_asm(p, plen < 128 ? plen : 128, dport);
             if (v == 0 && prev_tail != 0 && cur_head != 0) {
                 u64 stitched[2] = { prev_tail, cur_head };
                 v = inspect_l7_ring0_asm((const u8 *)stitched, 16, dport);
