@@ -317,9 +317,11 @@ static unsigned int zero_nf_hook(void *priv, struct sk_buff *skb, const struct n
     }
 
     ihl = iph->ihl * 4;
-    if (ihl < 20 || skb->len < ihl + sizeof(struct tcphdr)) return NF_ACCEPT;
+    if (ihl < 20 || !pskb_may_pull(skb, ihl + sizeof(struct tcphdr))) return NF_ACCEPT;
+    iph = ip_hdr(skb);
     tcph = (struct tcphdr *)((u8 *)iph + ihl);
     thl = tcph->doff * 4;
+    if (thl < sizeof(struct tcphdr) || skb->len < ihl + thl) return NF_ACCEPT;
     tot = ihl + thl;
 
     fhash = hash_5tuple_ring0_hw(iph->saddr, iph->daddr, tcph->source, tcph->dest, iph->protocol);
@@ -344,7 +346,7 @@ static unsigned int zero_nf_hook(void *priv, struct sk_buff *skb, const struct n
             u64 prev_tail = track_flow_stateful(fhash, skb->len, t0, cur_tail, plen, ntohl(tcph->seq), tcph->syn, tcph->ack, &est);
             u16 dport = ntohs(tcph->dest);
             bool l7_ok;
-            v = inspect_l7_ring0_asm(p, plen, dport);
+            v = inspect_l7_ring0_asm(p, plen < 512 ? plen : 512, dport);
             if (v == 0 && prev_tail != 0 && cur_head != 0) {
                 u64 stitched[2] = { prev_tail, cur_head };
                 v = inspect_l7_ring0_asm((const u8 *)stitched, 16, dport);
