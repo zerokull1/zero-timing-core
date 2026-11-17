@@ -24,11 +24,11 @@
 ### Core Telemetry & L1/L3 Cache Footprint
 - **Executable Footprint (`.text`):** `17.7 KB` (`11,234 B` core + `6,877 B` sealed DDR capsules) — fits entirely inside **32 KB L1 Instruction Cache** with `14.3 KB` (`44.7%`) free headroom.
 - **Hardware PMU (`RDPMC` on 10,000,000 frames):** `484.35 Mpps` (`6.80 cycles/frame`), `109` cache misses (**99.999% cache hit rate**), `737` branch mispredictions.
-- **Protocol & Evasion Coverage (`PROT_NONE` Guard-Page Verified):** HTTP/1.1, 512-byte HTTP `TE.CL`/`CL.TE` Smuggling with `CRLFCRLF` boundary stop, HTTP/2 Rapid Reset (`CVE-2023-44487`, `~8.4 cycles/frame`), TLS 1.3 Record Splitting, QUIC Initial (`RFC 9000`), DNS/NTP Amplification, Modbus TCP, and Contrastive SWAR/AVX2 Self-Learning (`0.00%` False Positives across 1,000,000 clean frames).
+- **Protocol & Evasion Coverage (`PROT_NONE` Guard-Page Verified):** HTTP/1.1, 128-byte HTTP `TE.CL`/`CL.TE` Smuggling with `CRLFCRLF` boundary stop, HTTP/2 Rapid Reset (`CVE-2023-44487`, `~8.4 cycles/frame`), TLS 1.3 Record Splitting, QUIC Initial (`RFC 9000`), DNS/NTP Amplification, Modbus TCP, and Contrastive SWAR/AVX2 Self-Learning (`0.00%` False Positives across 1,000,000 clean frames).
 
 ## Ring-0 Linux Kernel Module (`DKMS v2.4`) & Zero-Syscall Telemetry (`zero_top`)
 
-The monolithic Ring-0 kernel engine (`kernel_ring0/zero_timing_ring0.c`) provides inline `NF_INET_PRE_ROUTING` packet inspection with branchless `x86_64` ASM L7 DPI, 512-byte sliding GPR HTTP smuggling detection, lock-free `SSE4.2 CRC32C` flow tracking, constant-time `RDTSC` + per-CPU `Xorshift64*` gating, and a `SipHash-1-3` anti-poisoning sentinel bot.
+The monolithic Ring-0 kernel engine (`kernel_ring0/zero_timing_ring0.c`) provides inline `NF_INET_PRE_ROUTING` packet inspection with branchless `x86_64` ASM L7 DPI, 128-byte sliding GPR HTTP smuggling detection, lock-free `SSE4.2 CRC32C` flow tracking, constant-time `RDTSC` + per-CPU `Xorshift64*` gating, and a `SipHash-1-3` anti-poisoning sentinel bot.
 
 ### 1. DKMS Kernel Module Installation (`v2.4`)
 ```bash
