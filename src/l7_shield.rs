@@ -309,3 +309,185 @@ pub unsafe fn inspect_l7_payload_adaptive(payload: *const u8, len: usize, dst_po
     }
     inspect_l7_payload_asm(payload, len, dst_port)
 }}
+
+/// Коды вердиктов промышленных и UDP-инспекторов (0 = CleanPass)
+pub const VERDICT_MODBUS_BLOCK: u64   = 0x10;
+pub const VERDICT_ETHERCAT_BLOCK: u64 = 0x11;
+pub const VERDICT_DNS_BLOCK: u64      = 0x12;
+pub const VERDICT_NTP_BLOCK: u64      = 0x13;
+
+/// Безветвящийся x86_64 ASM инспектор Modbus TCP (TCP 502, бюджет ~6-8 тактов).
+/// Проверяет:
+/// - Минимальную длину MBAP + Function Code (>= 8 байт)
+/// - Protocol ID (байты 2..3) == 0x0000
+/// - Граничную длину MBAP (2 <= mbap_len <= 254 и mbap_len + 6 <= len)
+/// - Запрет опасных диагностических кодов функций (0x08 Diagnostics, 0x11 Report ID, 0x2B MEI) через битовую маску
+#[inline(always)]
+pub unsafe fn inspect_modbus_tcp_asm(payload: *const u8, len: usize) -> u64 { unsafe {
+    if len < 8 || payload.is_null() {
+        return VERDICT_MODBUS_BLOCK;
+    }
+
+    let q0 = core::ptr::read_unaligned(payload as *const u64);
+    let pkt_len = len as u32;
+    // Маска разрешённых стандартных кодов функций Modbus (0x01..0x06, 0x0F, 0x10, 0x14..0x17)
+    let allowed_fc_mask: u64 = (1u64 << 0x01) | (1u64 << 0x02) | (1u64 << 0x03) | (1u64 << 0x04)
+
+        | (1u64 << 0x05) | (1u64 << 0x06) | (1u64 << 0x0F) | (1u64 << 0x10)
+        | (1u64 << 0x14) | (1u64 << 0x15) | (1u64 << 0x16) | (1u64 << 0x17);
+    let mut verdict: u64 = 0;
+
+    asm!(
+        // 1) Protocol ID == 0 (байты 2..3 в q0)
+        "mov {t0}, {q0}",
+        "shr {t0}, 16",
+        "test {t0:x}, {t0:x}",
+        "mov {bad}, 0x10",
+        "cmovnz {verd}, {bad}",
+
+        // 2) MBAP Length (байты 4..5 в q0, Big-Endian -> rol 8)
+        "mov {t0}, {q0}",
+        "shr {t0}, 32",
+        "rol {t0:x}, 8",
+        "movzx {t1:e}, {t0:x}",
+        "cmp {t1:e}, 2",
+        "cmovb {verd}, {bad}",
+        "cmp {t1:e}, 254",
+        "cmova {verd}, {bad}",
+        "add {t1:e}, 6",
+        "cmp {t1:e}, {plen:e}",
+        "cmova {verd}, {bad}",
+
+        // 3) Function Code (байт 7 в q0) должен быть < 64 и выставлен в allowed_fc_mask
+        "mov {t0}, {q0}",
+        "shr {t0}, 56",
+        "cmp {t0:e}, 63",
+        "cmova {verd}, {bad}",
+        "bt {fmask}, {t0}",
+        "cmovnc {verd}, {bad}",
+
+        q0 = in(reg) q0,
+        plen = in(reg) pkt_len,
+        fmask = in(reg) allowed_fc_mask,
+        t0 = out(reg) _,
+        t1 = out(reg) _,
+        bad = out(reg) _,
+        verd = inout(reg) verdict,
+        options(pure, nomem, nostack)
+    );
+
+    verdict
+}}
+
+/// Безветвящийся x86_64 ASM инспектор EtherCAT Frame (EtherType 0x88A4 / UDP 0x88A4, бюджет ~4-6 тактов).
+/// Проверяет:
+/// - Минимальную длину EtherCAT Frame Header + 1 PDU (>= 14 байт)
+/// - Тип заголовка EtherCAT == 0x1 (DLPDU, биты 12..15 первого 16-битного слова)
+/// - Валидность 11-битной длины кадра: (ecat_len + 2) <= len
+#[inline(always)]
+pub unsafe fn inspect_ethercat_asm(payload: *const u8, len: usize) -> u64 { unsafe {
+    if len < 14 || payload.is_null() {
+        return VERDICT_ETHERCAT_BLOCK;
+    }
+
+    let q0 = core::ptr::read_unaligned(payload as *const u64);
+    let pkt_len = len as u32;
+    let mut verdict: u64 = 0;
+
+    asm!(
+        "mov {bad}, 0x11",
+        // Проверка типа EtherCAT: ((q0 >> 12) & 0x0F) == 1
+        "mov {t0:e}, {q0:e}",
+        "shr {t0:e}, 12",
+        "and {t0:e}, 0x0F",
+        "cmp {t0:e}, 1",
+        "cmovne {verd}, {bad}",
+
+        // Проверка длины: (q0 & 0x07FF) + 2 <= pkt_len и ecat_len >= 12
+        "mov {t0:e}, {q0:e}",
+        "and {t0:e}, 0x07FF",
+        "cmp {t0:e}, 12",
+        "cmovb {verd}, {bad}",
+        "add {t0:e}, 2",
+        "cmp {t0:e}, {plen:e}",
+        "cmova {verd}, {bad}",
+
+        q0 = in(reg) q0,
+        plen = in(reg) pkt_len,
+        t0 = out(reg) _,
+        bad = out(reg) _,
+        verd = inout(reg) verdict,
+        options(pure, nomem, nostack)
+    );
+
+    verdict
+}}
+
+/// Безветвящийся x86_64 ASM инспектор DNS Reflection / Amplification & Tunneling Guard (UDP 53, ~4 такта).
+/// Проверяет:
+/// - Минимальную длину DNS-заголовка (>= 12 байт; для инспекции QNAME >= 16 байт)
+/// - Отсечку входящих ответов без запроса (QR == 1, бит 0x0080 в LE flags) и Truncated (TC == 1, бит 0x0002 в LE flags)
+/// - Аномальную длину первой метки QNAME (> 63 байт, признак DNS-туннелирования iodine / dnscat2)
+#[inline(always)]
+pub unsafe fn inspect_dns_guard_asm(payload: *const u8, len: usize) -> u64 { unsafe {
+    if len < 16 || payload.is_null() {
+        return VERDICT_DNS_BLOCK;
+    }
+
+    let q0 = core::ptr::read_unaligned(payload as *const u64);
+    let q1 = core::ptr::read_unaligned(payload.add(8) as *const u64);
+    let mut verdict: u64 = 0;
+
+    asm!(
+        "mov {bad}, 0x12",
+        // Flags находятся в байтах 2..3 (q0 >> 16): QR (0x0080 LE) | TC (0x0002 LE) = 0x0082
+        "mov {t0}, {q0}",
+        "shr {t0}, 16",
+        "test {t0:x}, 0x0082",
+        "cmovnz {verd}, {bad}",
+
+        // Длина первой метки QNAME находится в байте 12 (q1 >> 32)
+        "mov {t0}, {q1}",
+        "shr {t0}, 32",
+        "cmp {t0:l}, 63",
+        "cmova {verd}, {bad}",
+
+        q0 = in(reg) q0,
+        q1 = in(reg) q1,
+        t0 = out(reg) _,
+        bad = out(reg) _,
+        verd = inout(reg) verdict,
+        options(pure, nomem, nostack)
+    );
+
+    verdict
+}}
+
+/// Безветвящийся x86_64 ASM инспектор NTP Mode 6 / Mode 7 (monlist) Amplification Guard (UDP 123, ~2-4 такта).
+/// Штатная синхронизация использует только Mode 3 (Client) и Mode 4 (Server).
+/// Mode 6 (Control) и Mode 7 (Private / monlist) отсекаются через cmp + cmovae.
+#[inline(always)]
+pub unsafe fn inspect_ntp_guard_asm(payload: *const u8, len: usize) -> u64 { unsafe {
+    if len < 48 || payload.is_null() {
+        return VERDICT_NTP_BLOCK;
+    }
+
+    let q0 = core::ptr::read_unaligned(payload as *const u64);
+    let mut verdict: u64 = 0;
+
+    asm!(
+        "mov {bad}, 0x13",
+        "mov {t0:e}, {q0:e}",
+        "and {t0:e}, 0x07",
+        "cmp {t0:e}, 6",
+        "cmovae {verd}, {bad}",
+
+        q0 = in(reg) q0,
+        t0 = out(reg) _,
+        bad = out(reg) _,
+        verd = inout(reg) verdict,
+        options(pure, nomem, nostack)
+    );
+
+    verdict
+}}
