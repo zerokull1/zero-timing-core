@@ -16,6 +16,79 @@ static LAST_CYCLES: AtomicU64 = AtomicU64::new(0);
 const PAWS_BUCKETS: usize = 4096;
 static PAWS_TABLE: [AtomicU64; PAWS_BUCKETS] = [const { AtomicU64::new(0) }; PAWS_BUCKETS];
 
+// Lock-Free Integer IAT Beaconing & Slowloris Rhythm Guard (4096 слотов, #![no_std])
+#[repr(C, align(32))]
+struct RhythmSlot {
+    tag: AtomicU64,
+    last_tsc: AtomicU64,
+    ema_packed: AtomicU64,   // (ema_iat32 << 32) | ema_dev32
+    cnt_bytes: AtomicU64,    // (pkt_count24 << 40) | byte_count40
+}
+
+impl RhythmSlot {
+    const fn new() -> Self {
+        Self {
+            tag: AtomicU64::new(0),
+            last_tsc: AtomicU64::new(0),
+            ema_packed: AtomicU64::new(0),
+            cnt_bytes: AtomicU64::new(0),
+        }
+    }
+}
+
+static RHYTHM_TABLE: [RhythmSlot; PAWS_BUCKETS] = [const { RhythmSlot::new() }; PAWS_BUCKETS];
+
+#[inline(always)]
+unsafe fn check_iat_rhythm_guard(
+    flow_hash: u64,
+    now_tsc: u64,
+    l7_len: usize,
+    tcp_flags: u8,
+) -> bool {
+    let idx = (flow_hash as usize) & (PAWS_BUCKETS - 1);
+    let slot = &RHYTHM_TABLE[idx];
+    let is_syn = (tcp_flags & 0x02) != 0;
+    let prev_tag = slot.tag.load(Ordering::Relaxed);
+
+    if is_syn || prev_tag != flow_hash {
+        slot.tag.store(flow_hash, Ordering::Relaxed);
+        slot.last_tsc.store(now_tsc, Ordering::Relaxed);
+        slot.ema_packed.store((1_000_000u64 << 32) | 500_000u64, Ordering::Relaxed);
+        slot.cnt_bytes.store((1u64 << 40) | (l7_len as u64), Ordering::Relaxed);
+        return false;
+    }
+
+    let prev_tsc = slot.last_tsc.swap(now_tsc, Ordering::Relaxed);
+    let raw_iat = now_tsc.saturating_sub(prev_tsc);
+    // Ограничиваем 32 битами для компактной упаковки (до ~4.2 млрд тактов ~ 1.1 сек)
+    let iat = if raw_iat > 0xFFFF_FFFF { 0xFFFF_FFFF } else { raw_iat };
+
+    let ema_p = slot.ema_packed.load(Ordering::Relaxed);
+    let old_iat = ema_p >> 32;
+    let old_dev = ema_p & 0xFFFF_FFFF;
+    let diff = iat.abs_diff(old_iat);
+
+    let new_iat = (old_iat * 7 + iat) >> 3;
+    let new_dev = (old_dev * 7 + diff) >> 3;
+    slot.ema_packed.store((new_iat << 32) | (new_dev & 0xFFFF_FFFF), Ordering::Relaxed);
+
+    let cb = slot.cnt_bytes.load(Ordering::Relaxed);
+    let pkt_cnt = ((cb >> 40) + 1) & 0x00FF_FFFF;
+    let byte_cnt = ((cb & 0x00FF_FFFF_FFFF) + (l7_len as u64)) & 0x00FF_FFFF_FFFF;
+    slot.cnt_bytes.store((pkt_cnt << 40) | byte_cnt, Ordering::Relaxed);
+
+    if pkt_cnt >= 16 {
+        // 1) Машинный C2-маяк / DoH периодический ритм (разброс < 1/32 от среднего IAT)
+        let is_beacon = new_iat > 10_000 && new_dev < (new_iat >> 5);
+        // 2) Slowloris / Low-and-Slow капельная атака (< 8 байт L7 в среднем на пакет)
+        let is_slowloris = byte_cnt < (pkt_cnt << 3);
+        if is_beacon || is_slowloris {
+            return true;
+        }
+    }
+    false
+}
+
 #[inline(always)]
 unsafe fn hash_paws_flow(src_ip: u32, dst_ip: u32, ports_be: u32) -> u64 {
     let lo = (src_ip as u64) | ((dst_ip as u64) << 32);
@@ -250,6 +323,14 @@ pub unsafe extern "C" fn zero_cisco_inspect_frame(frame_ptr: *const u8, frame_le
     // 4. Анти-микросегментация (1..7B PSH-капли для обхода 64-битного SWAR-окна) и ASM L7 DPI
     let payload_off = tcp_off + tcp_hdr_len;
     let l7_len = frame_len.saturating_sub(payload_off);
+    let ports_be_r = core::ptr::read_unaligned(frame_ptr.add(tcp_off) as *const u32);
+    let r_hash = hash_paws_flow(src_ip, dst_ip, ports_be_r);
+    if check_iat_rhythm_guard(r_hash, t0, l7_len, tcp_flags) {
+        DROPPED_L7.fetch_add(1, Ordering::Relaxed);
+        let t1 = rdtscp_end();
+        LAST_CYCLES.store(t1.saturating_sub(t0), Ordering::Relaxed);
+        return VERDICT_DECEPTION_TRAP;
+    }
     if l7_len > 0 && l7_len < 8 && (tcp_flags & 0x08) != 0 && (tcp_flags & 0x05) == 0 {
         DROPPED_L7.fetch_add(1, Ordering::Relaxed);
         let t1 = rdtscp_end();
