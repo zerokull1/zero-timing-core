@@ -165,16 +165,24 @@ pub unsafe extern "C" fn zero_cisco_inspect_frame(frame_ptr: *const u8, frame_le
     }
 
     let tcp_flags = *frame_ptr.add(tcp_off + 13);
-    if tcp_flags == 0x00 {
+    // Блокада TCP Null (0x00) и TCP URG Obfuscation (флаг URG 0x20)
+    if tcp_flags == 0x00 || (tcp_flags & 0x20) != 0 {
         DROPPED_L3_L4.fetch_add(1, Ordering::Relaxed);
         let t1 = rdtscp_end();
         LAST_CYCLES.store(t1.saturating_sub(t0), Ordering::Relaxed);
         return VERDICT_DROP;
     }
 
-    // 4. Безветвящийся x86_64 ASM L7 DPI (HTTP Smuggling POST / + chunked\r и TLS 1.3 Record Anomaly)
+    // 4. Анти-микросегментация (1..7B PSH-капли для обхода 64-битного SWAR-окна) и ASM L7 DPI
     let payload_off = tcp_off + tcp_hdr_len;
-    if frame_len >= payload_off + 16 {
+    let l7_len = frame_len.saturating_sub(payload_off);
+    if l7_len > 0 && l7_len < 8 && (tcp_flags & 0x08) != 0 && (tcp_flags & 0x05) == 0 {
+        DROPPED_L7.fetch_add(1, Ordering::Relaxed);
+        let t1 = rdtscp_end();
+        LAST_CYCLES.store(t1.saturating_sub(t0), Ordering::Relaxed);
+        return VERDICT_DECEPTION_TRAP;
+    }
+    if l7_len >= 16 {
         let p = frame_ptr.add(payload_off);
         let q0 = core::ptr::read_unaligned(p as *const u64);
         let q1 = core::ptr::read_unaligned(p.add(8) as *const u64);
