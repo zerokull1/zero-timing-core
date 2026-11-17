@@ -50,15 +50,23 @@ impl SealedDdrArena {
     #[inline(never)]
     pub unsafe fn seal_rx(&mut self) -> bool { unsafe {
         if self.ptr.is_null() || self.fd < 0 { return false; }
-        if arch::syscall3(sysno::SYS_MPROTECT, self.ptr as u64, self.len as u64, PROT_READ | PROT_EXEC) != 0 {
+        if arch::syscall2(sysno::SYS_MUNMAP, self.ptr as u64, self.len as u64) != 0 {
             return false;
         }
-        if arch::syscall3(sysno::SYS_FCNTL, self.fd as u64, F_ADD_SEALS, F_SEAL_ALL) == 0 {
-            let _ = arch::syscall1(sysno::SYS_CLOSE, self.fd as u64);
-            self.fd = -1;
-            self.sealed = true;
+        self.ptr = core::ptr::null_mut();
+        if arch::syscall3(sysno::SYS_FCNTL, self.fd as u64, F_ADD_SEALS, F_SEAL_ALL) != 0 {
+            return false;
         }
-        self.sealed
+        let rx_ret = arch::sys_mmap_anon_or_fd(0, self.len, PROT_READ | PROT_EXEC, MAP_SHARED, self.fd as isize, 0);
+        let _ = arch::syscall1(sysno::SYS_CLOSE, self.fd as u64);
+        self.fd = -1;
+        if rx_ret <= 0 || (rx_ret as usize) >= 0xFFFF_FFFF_FFFF_0000 {
+            return false;
+        }
+        self.ptr = rx_ret as *mut u8;
+        let _ = arch::syscall2(sysno::SYS_MLOCK, self.ptr as u64, self.len as u64);
+        self.sealed = true;
+        true
     }}
 
     #[inline(always)]

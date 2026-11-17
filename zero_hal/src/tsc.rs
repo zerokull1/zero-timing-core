@@ -14,7 +14,7 @@ pub fn rdtsc_start() -> u64 {
     #[cfg(target_arch = "s390x")]
     unsafe {
         let mut tod: u64 = 0;
-        asm!("bcr 14, 0", "stckf 0({p})", p = in(reg) &mut tod, options(nostack, preserves_flags));
+        asm!("bcr 14, 0", "stckf 0({p})", p = in(reg_addr) &mut tod, options(nostack, preserves_flags));
         tod >> 12
     }
 }
@@ -30,7 +30,7 @@ pub fn rdtsc_end() -> u64 {
     #[cfg(target_arch = "s390x")]
     unsafe {
         let mut tod: u64 = 0;
-        asm!("stckf 0({p})", "bcr 14, 0", p = in(reg) &mut tod, options(nostack, preserves_flags));
+        asm!("stckf 0({p})", "bcr 14, 0", p = in(reg_addr) &mut tod, options(nostack, preserves_flags));
         tod >> 12
     }
 }
