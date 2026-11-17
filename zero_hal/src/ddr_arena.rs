@@ -1,6 +1,7 @@
 // ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 #![allow(dead_code)]
 
+#[cfg(target_arch = "x86_64")]
 use core::arch::asm;
 use crate::arch::{self, sysno};
 
