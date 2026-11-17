@@ -1,5 +1,5 @@
 // ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
-#![allow(dead_code)]
+#![allow(dead_code, unused_unsafe)]
 
 #[cfg(any(target_arch = "x86_64", target_arch = "s390x", target_arch = "aarch64"))]
 use core::arch::asm;
