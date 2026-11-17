@@ -284,13 +284,15 @@ static __always_inline void constant_time_pad_ring0(u64 t0)
 static unsigned int zero_nf_hook(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
 {
     u64 t0 = rdtsc(), fhash;
-    struct iphdr *iph = skb ? ip_hdr(skb) : NULL;
+    struct iphdr *iph;
     struct tcphdr *tcph;
     u32 ihl, thl, tot, plen, v;
     u8 buf[512];
     const u8 *p;
     bool ban;
 
+    if (!skb || !pskb_may_pull(skb, sizeof(struct iphdr))) return NF_ACCEPT;
+    iph = ip_hdr(skb);
     if (!iph) return NF_ACCEPT;
     atomic64_inc(&stat_rx_pkts);
 
