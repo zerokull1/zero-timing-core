@@ -12,6 +12,72 @@ static DROPPED_L3_L4: AtomicU64 = AtomicU64::new(0);
 static DROPPED_L7: AtomicU64 = AtomicU64::new(0);
 static LAST_CYCLES: AtomicU64 = AtomicU64::new(0);
 
+// Lock-Free PAWS (TCP Timestamp Replay Guard, RFC 7323) таблица на 4096 слотов
+const PAWS_BUCKETS: usize = 4096;
+static PAWS_TABLE: [AtomicU64; PAWS_BUCKETS] = [const { AtomicU64::new(0) }; PAWS_BUCKETS];
+
+#[inline(always)]
+unsafe fn hash_paws_flow(src_ip: u32, dst_ip: u32, ports_be: u32) -> u64 {
+    let lo = (src_ip as u64) | ((dst_ip as u64) << 32);
+    let hi = (ports_be as u64) ^ 0x517C_C1B7_2722_0A95u64;
+    let mut h: u64 = 0x9E37_79B9_7F4A_7C15u64 ^ lo;
+    asm!(
+        "crc32 {h}, {lo}",
+        "crc32 {h}, {hi}",
+        h = inout(reg) h,
+        lo = in(reg) lo,
+        hi = in(reg) hi,
+        options(pure, nomem, nostack)
+    );
+    h ^ (h >> 33)
+}
+
+#[inline(always)]
+unsafe fn check_tcp_paws_replay(
+    frame_ptr: *const u8,
+    frame_len: usize,
+    tcp_off: usize,
+    tcp_hdr_len: usize,
+    tcp_flags: u8,
+    src_ip: u32,
+    dst_ip: u32,
+) -> bool {
+    // Стандартная 12-байтная опция TCP Timestamps: NOP(0x01), NOP(0x01), Kind=8(0x08), Len=10(0x0A)
+    if tcp_hdr_len < 32 || frame_len < tcp_off + 32 {
+        return false;
+    }
+    let opt_ptr = frame_ptr.add(tcp_off + 20);
+    let prefix = core::ptr::read_unaligned(opt_ptr as *const u32);
+    if prefix != 0x0A08_0101 {
+        return false;
+    }
+    let tsval = u32::from_be(core::ptr::read_unaligned(opt_ptr.add(4) as *const u32));
+    if tsval == 0 {
+        return false;
+    }
+
+    let ports_be = core::ptr::read_unaligned(frame_ptr.add(tcp_off) as *const u32);
+    let h = hash_paws_flow(src_ip, dst_ip, ports_be);
+    let idx = (h as usize) & (PAWS_BUCKETS - 1);
+    let tag = (h >> 32) as u32;
+    let slot = &PAWS_TABLE[idx];
+    let prev = slot.load(Ordering::Relaxed);
+    let prev_tag = (prev >> 32) as u32;
+    let prev_ts = (prev & 0xFFFF_FFFF) as u32;
+
+    let is_syn = (tcp_flags & 0x02) != 0;
+    if !is_syn && prev != 0 && prev_tag == tag && prev_ts != 0 {
+        // Если TSval отмотан назад (PAWS Wraparound / Replay Attack) -> блокируем!
+        if tsval.wrapping_sub(prev_ts) > 0x7FFF_FFFF {
+            return true;
+        }
+    }
+
+    let packed = ((tag as u64) << 32) | (tsval as u64);
+    slot.store(packed, Ordering::Relaxed);
+    false
+}
+
 // Контракт вердиктов C-ABI (синхронизировано с benchmarks/pcap_bench.py):
 // 0 = DROP, 1 = PASS, 2 = DECEPTION_TRAP, 3 = MTD_MUTATE
 const VERDICT_DROP: u32 = 0;
@@ -171,6 +237,14 @@ pub unsafe extern "C" fn zero_cisco_inspect_frame(frame_ptr: *const u8, frame_le
         let t1 = rdtscp_end();
         LAST_CYCLES.store(t1.saturating_sub(t0), Ordering::Relaxed);
         return VERDICT_DROP;
+    }
+
+    // 3.5. Проверка монотонности TCP Timestamp (PAWS Replay Guard, RFC 7323)
+    if check_tcp_paws_replay(frame_ptr, frame_len, tcp_off, tcp_hdr_len, tcp_flags, src_ip, dst_ip) {
+        DROPPED_L3_L4.fetch_add(1, Ordering::Relaxed);
+        let t1 = rdtscp_end();
+        LAST_CYCLES.store(t1.saturating_sub(t0), Ordering::Relaxed);
+        return VERDICT_DECEPTION_TRAP;
     }
 
     // 4. Анти-микросегментация (1..7B PSH-капли для обхода 64-битного SWAR-окна) и ASM L7 DPI
