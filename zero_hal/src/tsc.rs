@@ -5,76 +5,62 @@ use core::arch::asm;
 
 #[inline(always)]
 pub fn rdtsc_start() -> u64 {
-    let low: u32;
-    let high: u32;
+    #[cfg(target_arch = "x86_64")]
     unsafe {
-        asm!(
-            "lfence",
-            "rdtsc",
-            out("eax") low,
-            out("edx") high,
-            options(nomem, nostack, preserves_flags)
-        );
+        let (low, high): (u32, u32);
+        asm!("lfence", "rdtsc", out("eax") low, out("edx") high, options(nomem, nostack, preserves_flags));
+        ((high as u64) << 32) | (low as u64)
     }
-    ((high as u64) << 32) | (low as u64)
+    #[cfg(target_arch = "s390x")]
+    unsafe {
+        let mut tod: u64 = 0;
+        asm!("bcr 14, 0", "stckf 0({p})", p = in(reg) &mut tod, options(nostack, preserves_flags));
+        tod >> 12
+    }
 }
 
 #[inline(always)]
 pub fn rdtsc_end() -> u64 {
-    let low: u32;
-    let high: u32;
+    #[cfg(target_arch = "x86_64")]
     unsafe {
-        asm!(
-            "rdtscp",
-            "lfence",
-            out("eax") low,
-            out("edx") high,
-            out("ecx") _,
-            options(nomem, nostack, preserves_flags)
-        );
+        let (low, high): (u32, u32);
+        asm!("rdtscp", "lfence", out("eax") low, out("edx") high, out("ecx") _, options(nomem, nostack, preserves_flags));
+        ((high as u64) << 32) | (low as u64)
     }
-    ((high as u64) << 32) | (low as u64)
+    #[cfg(target_arch = "s390x")]
+    unsafe {
+        let mut tod: u64 = 0;
+        asm!("stckf 0({p})", "bcr 14, 0", p = in(reg) &mut tod, options(nostack, preserves_flags));
+        tod >> 12
+    }
 }
 
 #[inline(always)]
-pub fn measure_cycles<F, R>(f: F) -> (R, u64)
-where
-    F: FnOnce() -> R,
-{
+pub fn measure_cycles<F: FnOnce() -> R, R>(f: F) -> (R, u64) {
     let start = rdtsc_start();
-    let result = f();
-    let end = rdtsc_end();
-    (result, end.saturating_sub(start))
+    let res = f();
+    (res, rdtsc_end().saturating_sub(start))
 }
 
 #[inline(always)]
-pub fn constant_time_gate<F, R>(target_cycles: u64, f: F) -> R
-where
-    F: FnOnce() -> R,
-{
+pub fn constant_time_gate<F: FnOnce() -> R, R>(target_cycles: u64, f: F) -> R {
     let start = rdtsc_start();
-    let result = f();
+    let res = f();
     while rdtsc_end().saturating_sub(start) < target_cycles {
         core::hint::spin_loop();
     }
-    result
+    res
 }
 
 #[inline(always)]
-pub fn constant_time_jittered_gate<F, R>(base_cycles: u64, jitter_mask: u64, f: F) -> R
-where
-    F: FnOnce() -> R,
-{
+pub fn constant_time_jittered_gate<F: FnOnce() -> R, R>(base_cycles: u64, jitter_mask: u64, f: F) -> R {
     let start = rdtsc_start();
-    let result = f();
+    let res = f();
     let mut x = start ^ 0x9E3779B97F4A7C15;
-    x ^= x >> 12;
-    x ^= x << 25;
-    x ^= x >> 27;
-    let rnd = x.wrapping_mul(0x2545F4914F6CDD1D);
-    let target = base_cycles.saturating_add(rnd & jitter_mask);
+    x ^= x >> 12; x ^= x << 25; x ^= x >> 27;
+    let target = base_cycles.saturating_add(x.wrapping_mul(0x2545F4914F6CDD1D) & jitter_mask);
     while rdtsc_end().saturating_sub(start) < target {
         core::hint::spin_loop();
     }
-    result
+    res
 }

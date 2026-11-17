@@ -6,16 +6,17 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
-pub const FLOW_TABLE_BUCKETS: usize = 65536; // Степень двойки для быстрой битовой маски (& 0xFFFF)
+pub const FLOW_TABLE_BUCKETS: usize = 65536;
+const SLOT_LOCKED_SENTINEL: u64 = u64::MAX;
 
 /// Слот активного сетевого потока (ровно 64 байта = 1 кэш-линия процессора, Zero False-Sharing).
 #[repr(C, align(64))]
 pub struct FlowSlot {
-    pub flow_hash: AtomicU64,   // 64-битный хэш 5-tuple (SrcIP, DstIP, SrcPort, DstPort, Proto)
-    pub pkt_count: AtomicU64,   // Счётчик пакетов в сессии
-    pub byte_count: AtomicU64,  // Счётчик байт в сессии
-    pub last_tsc: AtomicU64,    // Аппаратная метка времени (TSC) последнего пакета
-    pub flags: AtomicU64,       // Битовая маска состояния (0x01 = Verified, 0x02 = Suspicious, 0x04 = Blocked)
+    pub flow_hash: AtomicU64,
+    pub pkt_count: AtomicU64,
+    pub byte_count: AtomicU64,
+    pub last_tsc: AtomicU64,
+    pub flags: AtomicU64,
     pub _pad: [u64; 3],
 }
 
@@ -32,14 +33,15 @@ impl FlowSlot {
     }
 }
 
-/// Безблокировочное обновление состояния потока в DDR за один проход CAS (lock cmpxchg)
+/// Безблокировочное обновление состояния потока в DDR с защитой от гонки инициализации флагов.
 #[inline(always)]
 pub unsafe fn track_flow_lockfree(
     table_ptr: *const FlowSlot,
-    flow_hash: u64,
+    raw_hash: u64,
     pkt_len: u64,
     now_tsc: u64,
 ) -> u64 { unsafe {
+    let flow_hash = if raw_hash == 0 || raw_hash == SLOT_LOCKED_SENTINEL { 1 } else { raw_hash };
     let idx = (flow_hash as usize) & (FLOW_TABLE_BUCKETS - 1);
     let slot = &*table_ptr.add(idx);
 
@@ -51,26 +53,30 @@ pub unsafe fn track_flow_lockfree(
         return slot.flags.load(Ordering::Acquire);
     }
 
-    // Если слот пуст или устарел (> 3 млрд тактов ~ 1 сек) — захватываем его без блокировок
+    if current_hash == SLOT_LOCKED_SENTINEL {
+        return 0;
+    }
+
     let last = slot.last_tsc.load(Ordering::Relaxed);
     if (current_hash == 0 || now_tsc.saturating_sub(last) > 3_000_000_000)
         && slot
             .flow_hash
-            .compare_exchange(current_hash, flow_hash, Ordering::AcqRel, Ordering::Relaxed)
+            .compare_exchange(current_hash, SLOT_LOCKED_SENTINEL, Ordering::AcqRel, Ordering::Relaxed)
             .is_ok()
-        {
-            slot.pkt_count.store(1, Ordering::Relaxed);
-            slot.byte_count.store(pkt_len, Ordering::Relaxed);
-            slot.flags.store(0, Ordering::Relaxed);
-            slot.last_tsc.store(now_tsc, Ordering::Release);
-            return 0;
-        }
+    {
+        slot.pkt_count.store(1, Ordering::Relaxed);
+        slot.byte_count.store(pkt_len, Ordering::Relaxed);
+        slot.flags.store(0, Ordering::Relaxed);
+        slot.last_tsc.store(now_tsc, Ordering::Release);
+        slot.flow_hash.store(flow_hash, Ordering::Release);
+        return 0;
+    }
 
     0
 }}
 
-/// Аппаратный 64-битный криптографический хэш 5-tuple на кремниевых инструкциях Intel AES-NI (`aesenc`) + SSE4.2 (`crc32q`).
-/// Защищает lock-free таблицу потоков от Hash-Flooding / Bucket Collision DoS за ~3-4 такта CPU.
+/// Аппаратный 64-битный криптографический хэш 5-tuple на Intel AES-NI (`aesenc`) + SSE4.2 (`crc32q`)
+/// с кросс-платформенным лавинным fallback для s390x / non-x86_64.
 #[inline(always)]
 pub unsafe fn hash_5tuple_aes_crc32(
     src_ip: u32,
@@ -112,11 +118,20 @@ pub unsafe fn hash_5tuple_aes_crc32(
 
     #[cfg(not(target_arch = "x86_64"))]
     {
-        (lo ^ epoch_key_lo).wrapping_mul(0x9E3779B97F4A7C15) ^ (hi ^ epoch_key_hi)
+        let mut v0 = lo ^ epoch_key_lo ^ 0x736f6d6570736575;
+        let mut v1 = hi ^ epoch_key_hi ^ 0x646f72616e646f6d;
+        for _ in 0..2 {
+            v0 = v0.wrapping_add(v1);
+            v1 = v1.rotate_left(13) ^ v0;
+            v0 = v0.rotate_left(32);
+            v0 = v0.wrapping_add(v1);
+            v1 = v1.rotate_left(17) ^ v0;
+            v0 = v0.rotate_left(21);
+        }
+        v0 ^ v1
     }
 }}
 
-/// Полный цикл: аппаратный AES-NI+CRC32 хэш 5-tuple + lock-free обновление 64-байтного слота в DDR
 #[inline(always)]
 pub unsafe fn track_packet_5tuple(
     table_ptr: *const FlowSlot,

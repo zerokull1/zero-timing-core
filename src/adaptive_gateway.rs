@@ -6,16 +6,26 @@
 
 use core::arch::asm;
 
+#[cfg(target_arch = "x86_64")]
+const TICKS_15MS: u64  = 50_000_000;
+#[cfg(target_arch = "x86_64")]
+const TICKS_1SEC: u64  = 3_000_000_000;
+#[cfg(target_arch = "x86_64")]
+const TICKS_10SEC: u64 = 30_000_000_000;
+
+#[cfg(not(target_arch = "x86_64"))]
+const TICKS_15MS: u64  = 15_000;
+#[cfg(not(target_arch = "x86_64"))]
+const TICKS_1SEC: u64  = 1_000_000;
+#[cfg(not(target_arch = "x86_64"))]
+const TICKS_10SEC: u64 = 10_000_000;
+
 /// Состояние автономного адаптивного шлюза (выровнено по кэш-линии 64 байта)
 #[repr(C, align(64))]
 pub struct AdaptiveDdosGateway {
-    /// Текущий порог энтропии Шеннона в формате Q16.16 (по умолчанию 3.50 бита = 229376)
     pub entropy_threshold_q16: u32,
-    /// Базовый порог для быстрого возврата после спада атаки
     pub base_threshold_q16: u32,
-    /// Счётчик адаптированных (заблокированных) аномальных потоков
     pub mitigated_flows: u64,
-    /// Режим жёсткой блокировки (0 = штатный, 1 = карантин)
     pub lockdown_level: u32,
     pub _pad: [u32; 9],
 }
@@ -24,7 +34,7 @@ impl AdaptiveDdosGateway {
     #[inline(always)]
     pub const fn new() -> Self {
         Self {
-            entropy_threshold_q16: 229_376, // 3.50 bits (Q16.16)
+            entropy_threshold_q16: 229_376,
             base_threshold_q16: 229_376,
             mitigated_flows: 0,
             lockdown_level: 0,
@@ -32,13 +42,11 @@ impl AdaptiveDdosGateway {
         }
     }
 
-    /// Безветвящийся ассемблерный вердикт шлюза (cmova) на основе спектральной энтропии потока:
-    /// Возвращает: 0 = PASS, 1 = QUARANTINE (подозрительный всплеск), 2 = HARD DROP (атака)
     #[inline(always)]
     pub unsafe fn evaluate_flow_asm(&mut self, flow_entropy_q16: u32, packet_score: u32) -> u32 { unsafe {
         let mut verdict: u32 = 0;
         let thresh = self.entropy_threshold_q16;
-        let hard_thresh = thresh.wrapping_add(32_768); // +0.50 бита сверх порога -> мгновенный DROP
+        let hard_thresh = thresh.wrapping_add(32_768);
 
         #[cfg(target_arch = "x86_64")]
         asm!(
@@ -67,7 +75,6 @@ impl AdaptiveDdosGateway {
             }
         }
 
-        // Адаптивная подстройка порога без ветвлений: при атаке порог затягивается ниже, в покое плавно отпускает
         let is_attack = (verdict != 0) as u32;
         self.mitigated_flows = self.mitigated_flows.wrapping_add(is_attack as u64);
         self.lockdown_level = is_attack;
@@ -75,7 +82,7 @@ impl AdaptiveDdosGateway {
         let tightened = self.entropy_threshold_q16.saturating_sub(512);
         let relaxed = self.entropy_threshold_q16.saturating_add(128).min(self.base_threshold_q16);
         self.entropy_threshold_q16 = if is_attack != 0 {
-            tightened.max(163_840) // Не ниже 2.50 бита
+            tightened.max(163_840)
         } else {
             relaxed
         };
@@ -131,8 +138,6 @@ fn siphash_1_3_u32(val: u32, k0: u64, k1: u64) -> u64 {
     (v0 ^ v1) ^ (v2 ^ v3)
 }
 
-/// Автономный обучаемый сторожевой бот с SipHash-1-3 индексацией, TTL-арендой WHITELIST_MAP
-/// и защитой от отравления обучения (Anti-Poisoning + Anti-Eviction + Burst Rate-Limit).
 #[repr(C, align(64))]
 pub struct OnlineSentinelBot {
     pub slots: [SentinelSlot; 64],
@@ -182,8 +187,9 @@ impl OnlineSentinelBot {
         let idx = (siphash_1_3_u32(src_ip_be, self.epoch_k0, self.epoch_k1) & 63) as usize;
         let slot = &mut self.slots[idx];
 
+        let mut is_new_slot = false;
         if slot.src_ip_be != src_ip_be {
-            if slot.banned != 0 && now_tsc.saturating_sub(slot.last_tsc) < 3_000_000_000 {
+            if slot.banned != 0 && now_tsc.saturating_sub(slot.last_tsc) < TICKS_1SEC {
                 self.poison_attempts_blocked += 1;
                 return;
             }
@@ -200,46 +206,32 @@ impl OnlineSentinelBot {
                 last_tsc: now_tsc,
                 lease_expire_tsc: 0,
             };
+            is_new_slot = true;
         }
 
-        // TTL Decay: отзыв записи из ядерного WHITELIST_MAP по истечении срока аренды
         if slot.promoted != 0 && now_tsc > slot.lease_expire_tsc {
             slot.promoted = 0;
             slot.trust_score = 0;
             unsafe { crate::bpf_control::whitelist_del_ipv4(whitelist_map_fd, src_ip_be); }
         }
 
-        let delta_tsc = now_tsc.saturating_sub(slot.last_tsc);
+        let delta_tsc = if is_new_slot { TICKS_15MS } else { now_tsc.saturating_sub(slot.last_tsc) };
         slot.last_tsc = now_tsc;
 
         if is_clean {
             if slot.banned != 0 {
                 return;
             }
-            if delta_tsc < 50_000 {
-                slot.burst_strikes = slot.burst_strikes.saturating_add(1);
-                if slot.burst_strikes >= 32 {
-                    slot.banned = 1;
-                    slot.trust_score = 0;
-                    self.learned_banned += 1;
-                    self.poison_attempts_blocked += 1;
-                    if slot.promoted != 0 {
-                        slot.promoted = 0;
-                        unsafe { crate::bpf_control::whitelist_del_ipv4(whitelist_map_fd, src_ip_be); }
-                    }
-                }
-                return;
-            }
-
-            if delta_tsc >= 50_000_000 {
+            if delta_tsc >= TICKS_15MS {
                 slot.trust_score = slot.trust_score.saturating_add(1);
-                slot.burst_strikes = slot.burst_strikes.saturating_sub(1);
                 if slot.trust_score >= 16 && slot.promoted == 0 {
                     slot.promoted = 1;
-                    slot.lease_expire_tsc = now_tsc.saturating_add(30_000_000_000);
+                    slot.lease_expire_tsc = now_tsc.saturating_add(TICKS_10SEC);
                     self.learned_whitelisted += 1;
                     unsafe { crate::bpf_control::whitelist_add_ipv4(whitelist_map_fd, src_ip_be); }
                 }
+            } else {
+                self.poison_attempts_blocked = self.poison_attempts_blocked.saturating_add(1);
             }
         } else {
             if slot.banned == 0 {

@@ -125,8 +125,8 @@ static __always_inline u64 track_flow_stateful(
         return prev;
     }
 
-    if ((cur == 0 || (now_tsc - (u64)atomic64_read(&slot->last_tsc)) > 3000000000ULL) &&
-        atomic64_cmpxchg(&slot->flow_hash, cur, (s64)fhash) == cur) {
+    if (cur != -1LL && (cur == 0 || (now_tsc - (u64)atomic64_read(&slot->last_tsc)) > 3000000000ULL) &&
+        atomic64_cmpxchg(&slot->flow_hash, cur, -1LL) == cur) {
         atomic64_set(&slot->pkt_count, 1);
         atomic64_set(&slot->byte_count, pkt_len);
         atomic64_set(&slot->last_tsc, now_tsc);
@@ -134,6 +134,7 @@ static __always_inline u64 track_flow_stateful(
         st = (is_syn && !is_ack) ? 1 : 0;
         atomic_set(&slot->tcp_state, st);
         atomic_set(&slot->expected_seq, (int)(is_syn ? (seq_host + 1) : (seq_host + payload_len)));
+        atomic64_set(&slot->flow_hash, (s64)fhash);
         *out_established = false;
         return 0;
     }
@@ -252,7 +253,9 @@ static bool sentinel_observe_and_check_ban(u32 src_ip, bool is_clean, bool sessi
 
     if (is_clean && !slot->banned) {
         if (session_verified && delta >= 50000000ULL && ++slot->trust_score >= 16 && !slot->promoted) {
-            slot->promoted = 1; atomic64_inc(&stat_bot_wl);
+            slot->promoted = 1;
+            slot->lease_expire_tsc = now_tsc + 30000000000ULL;
+            atomic64_inc(&stat_bot_wl);
         }
     } else if (!is_clean && !slot->banned) {
         slot->banned = 1; slot->trust_score = 0;
