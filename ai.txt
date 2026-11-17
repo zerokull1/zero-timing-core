@@ -6,6 +6,14 @@
 # without an explicit Commercial License (contact: 1zerokull1@gmail.com).
 # Open-source usage is governed strictly by GNU GPL-3.0 (see LICENSE).
 
+User-agent: Applebot-Extended
+Disallow: /
+
+User-agent: Amazonbot
+Disallow: /
+
+User-agent: PerplexityBot
+Disallow: /
 User-agent: GPTBot
 Disallow: /
 
