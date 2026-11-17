@@ -4,10 +4,15 @@
 
 use core::arch::asm;
 use core::ptr::{read_volatile, write_volatile};
+use core::sync::atomic::{fence, Ordering};
 
 #[inline(always)]
 unsafe fn pci_addr(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
-    0x8000_0000 | ((bus as u32) << 16) | ((dev as u32) << 11) | ((func as u32) << 8) | ((offset as u32) & 0xFC)
+    0x8000_0000
+        | ((bus as u32) << 16)
+        | ((dev as u32) << 11)
+        | ((func as u32) << 8)
+        | ((offset as u32) & 0xFC)
 }
 
 #[inline(always)]
@@ -30,16 +35,26 @@ pub unsafe fn probe_intel_nic() -> Option<(usize, [u8; 6], u32)> {
     for bus in 0..=4u8 {
         for dev in 0..32u8 {
             if pci_read32(bus, dev, 0, 0x00) == 0x100E_8086 {
-                let bar0 = (pci_read32(bus, dev, 0, 0x10) & 0xFFFF_FFF0) as usize;
+                let bar0_lo = pci_read32(bus, dev, 0, 0x10);
+                let is_64bit = ((bar0_lo >> 1) & 0x3) == 0x2;
+                let bar0_hi = if is_64bit { pci_read32(bus, dev, 0, 0x14) } else { 0 };
+                let bar0 = (((bar0_hi as u64) << 32) | ((bar0_lo & 0xFFFF_FFF0) as u64)) as usize;
+                if bar0 == 0 {
+                    continue;
+                }
+
                 let cmd = pci_read32(bus, dev, 0, 0x04);
                 pci_write32(bus, dev, 0, 0x04, cmd | 0x06); // Bus Master + MMIO
 
                 let ral = read_volatile((bar0 + 0x5400) as *const u32);
                 let rah = read_volatile((bar0 + 0x5404) as *const u32);
                 let mac = [
-                    (ral & 0xFF) as u8, ((ral >> 8) & 0xFF) as u8,
-                    ((ral >> 16) & 0xFF) as u8, ((ral >> 24) & 0xFF) as u8,
-                    (rah & 0xFF) as u8, ((rah >> 8) & 0xFF) as u8,
+                    (ral & 0xFF) as u8,
+                    ((ral >> 8) & 0xFF) as u8,
+                    ((ral >> 16) & 0xFF) as u8,
+                    ((ral >> 24) & 0xFF) as u8,
+                    (rah & 0xFF) as u8,
+                    ((rah >> 8) & 0xFF) as u8,
                 ];
                 let status = read_volatile((bar0 + 0x0008) as *const u32);
                 write_volatile((bar0 + 0x0100) as *mut u32, (1 << 1) | (1 << 15)); // RCTL EN + BAM
@@ -62,14 +77,30 @@ pub struct TxDesc {
     pub special: u16,
 }
 
-static mut TX_RING: [TxDesc; 8] = [TxDesc { addr: 0, length: 0, cso: 0, cmd: 0, status: 0, css: 0, special: 0 }; 8];
+static mut TX_RING: [TxDesc; 8] = [TxDesc {
+    addr: 0,
+    length: 0,
+    cso: 0,
+    cmd: 0,
+    status: 0,
+    css: 0,
+    special: 0,
+}; 8];
 static mut TX_PKT: [u8; 64] = [0u8; 64];
 
 pub unsafe fn tx_send_frame(bar0: usize, mac: [u8; 6]) -> u8 {
-    TX_PKT[0..6].copy_from_slice(&[0xFF; 6]); // Broadcast dst
-    TX_PKT[6..12].copy_from_slice(&mac);       // Src MAC
-    TX_PKT[12..14].copy_from_slice(&0x88B5u16.to_be_bytes()); // Custom EtherType
-    TX_PKT[14..22].copy_from_slice(b"ZERORING");
+    let pkt_ptr = (&raw mut TX_PKT).cast::<u8>();
+    for i in 0..6 {
+        write_volatile(pkt_ptr.add(i), 0xFF);
+        write_volatile(pkt_ptr.add(6 + i), mac[i]);
+    }
+    let etype = 0x88B5u16.to_be_bytes();
+    write_volatile(pkt_ptr.add(12), etype[0]);
+    write_volatile(pkt_ptr.add(13), etype[1]);
+    let magic = b"ZERORING";
+    for i in 0..8 {
+        write_volatile(pkt_ptr.add(14 + i), magic[i]);
+    }
 
     let ring_addr = (&raw const TX_RING).cast::<TxDesc>() as u64;
     write_volatile((bar0 + 0x3800) as *mut u32, (ring_addr & 0xFFFF_FFFF) as u32); // TDBAL
@@ -79,15 +110,19 @@ pub unsafe fn tx_send_frame(bar0: usize, mac: [u8; 6]) -> u8 {
     write_volatile((bar0 + 0x3818) as *mut u32, 0);                               // TDT
     write_volatile((bar0 + 0x0400) as *mut u32, (1 << 1) | (1 << 3));             // TCTL EN + PSP
 
-    TX_RING[0].addr = (&raw const TX_PKT).cast::<u8>() as u64;
-    TX_RING[0].length = 64;
-    TX_RING[0].cmd = (1 << 0) | (1 << 1) | (1 << 3); // EOP | IFCS | RS
-    TX_RING[0].status = 0;
+    let desc0 = (&raw mut TX_RING).cast::<TxDesc>();
+    write_volatile(&raw mut (*desc0).addr, pkt_ptr as u64);
+    write_volatile(&raw mut (*desc0).length, 64);
+    write_volatile(&raw mut (*desc0).cmd, (1 << 0) | (1 << 1) | (1 << 3)); // EOP | IFCS | RS
+    write_volatile(&raw mut (*desc0).status, 0);
 
-    // Удар в MMIO Doorbell (TDT = 1) -> NIC DMA забирает кадр в провод!
+    // Барьер памяти перед ударом в MMIO Doorbell, чтобы DMA NIC увидел актуальный дескриптор
+    fence(Ordering::Release);
+    asm!("sfence", options(nostack));
+
     write_volatile((bar0 + 0x3818) as *mut u32, 1);
     for _ in 0..100_000 {
-        let st = read_volatile(&TX_RING[0].status);
+        let st = read_volatile(&raw const (*desc0).status);
         if (st & 0x01) != 0 {
             return st; // Descriptor Done (DD = 1)
         }

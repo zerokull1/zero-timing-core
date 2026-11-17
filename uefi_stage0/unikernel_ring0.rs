@@ -125,17 +125,25 @@ unsafe fn serial_write_u64(mut n: u64) {
     serial_write_bytes(&buf[i..]);
 }
 
+#[repr(C, packed)]
+struct IdtDescriptor { limit: u16, base: u64 }
+
 #[inline(always)]
-unsafe fn lock_hardware_nxe_and_smram() {
-    // 1. Включаем NXE (Bit 11) в IA32_EFER (MSR 0xC000_0080) -> аппаратный запрет исполнения данных
+
+unsafe fn lock_hardware_nxe_and_smram() -> bool {
     let (mut lo, hi): (u32, u32);
     asm!("rdmsr", in("ecx") 0xC000_0080u32, out("eax") lo, out("edx") hi, options(nostack, nomem));
     lo |= 1 << 11;
     asm!("wrmsr", in("ecx") 0xC000_0080u32, in("eax") lo, in("edx") hi, options(nostack, nomem));
 
-    // 2. Устанавливаем D_LCK (Bit 4 в SMRAM 0x88 на Host Bridge 00:00.0) -> блокировка Ring -2 SMM
-    let smram = pci_nic::pci_read32(0, 0, 0, 0x88);
-    pci_nic::pci_write32(0, 0, 0, 0x88, smram | (1 << 4));
+    if (pci_nic::pci_read32(0, 0, 0, 0x00) & 0xFFFF) == 0x8086 {
+        let smram = pci_nic::pci_read32(0, 0, 0, 0x88);
+        if (smram & (1 << 4)) == 0 {
+            pci_nic::pci_write32(0, 0, 0, 0x88, smram | (1 << 4));
+        }
+        return (pci_nic::pci_read32(0, 0, 0, 0x88) & (1 << 4)) != 0;
+    }
+    false
 }
 
 #[inline(always)]
@@ -163,32 +171,25 @@ pub extern "efiapi" fn efi_main(image_handle: EfiHandle, system_table: *const Ef
 
         let bs = (*system_table).boot_services;
         let mut mmap_buf = [0u8; 32768];
-        let mut mmap_size = mmap_buf.len();
+        let mut mmap_size: usize;
         let mut map_key: usize = 0;
         let mut desc_size: usize = 0;
         let mut desc_ver: u32 = 0;
 
-        // Получаем актуальный MapKey и вызываем ExitBootServices()
-        let status = ((*bs).get_memory_map)(
-            &mut mmap_size,
-            mmap_buf.as_mut_ptr(),
-            &mut map_key,
-            &mut desc_size,
-            &mut desc_ver,
-        );
-        if status != 0 {
-            serial_write_bytes(b"[ERR] GetMemoryMap failed\r\n");
-            return status;
+        let mut exited = false;
+        let mut last_st = 0;
+        for _ in 0..2 {
+            mmap_size = mmap_buf.len();
+            let st = ((*bs).get_memory_map)(&mut mmap_size, mmap_buf.as_mut_ptr(), &mut map_key, &mut desc_size, &mut desc_ver);
+            if st != 0 { return st; }
+            last_st = ((*bs).exit_boot_services)(image_handle, map_key);
+            if last_st == 0 { exited = true; break; }
         }
+        if !exited { return last_st; }
 
-        let exit_status = ((*bs).exit_boot_services)(image_handle, map_key);
-        if exit_status != 0 {
-            serial_write_bytes(b"[ERR] ExitBootServices failed\r\n");
-            return exit_status;
-        }
-
-        // ТОЧКА НЕВОЗВРАТА: Прошивка UEFI отключена! Мы в чистом Ring 0 без ОС!
-        asm!("cli", options(nostack, nomem));
+        let null_idt = IdtDescriptor { limit: 0, base: 0 };
+        asm!("cli", "lidt [{}]", in(reg) &null_idt, options(nostack));
+        for b in mmap_buf.iter_mut() { core::ptr::write_volatile(b, 0); }
 
         serial_write_bytes(b"==============================================================\r\n");
         serial_write_bytes(b"  ZERO-TIMING UNIKERNEL: BARE-METAL RING 0 ACTIVE (NO OS!)\r\n");
