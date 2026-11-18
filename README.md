@@ -56,3 +56,11 @@ cargo build --release --bin zero_top
 ## 🛡️ Security Advisories & Mitigation Log
 
 Tracking of critical CVEs and branchless data-plane mitigations is maintained in [SECURITY_ADVISORIES.md](SECURITY_ADVISORIES.md).
+
+---
+
+## 🖥️ Rackmount R&D Stand Fundraiser (Dell PowerEdge R730 + 10GbE SFP+)
+
+This project is an independent open-source deterministic data-plane R&D initiative. All contributions go directly toward acquiring a dedicated rackmount testbed (**Dell PowerEdge R730**, `2x Intel Xeon E5-2690 v4`, `Intel X520-DA2 10GbE SFP+`) to publish hardware wire-to-wire `XDP_DRV`, `Intel DDIO`, and `Intel CAT` L3 cache pinning benchmarks.
+
+* **TON (The Open Network):** `UQBTjCDPiQIUl73F_1f-3ArppvjdfJ7mfONIyfDZl5d9z66Z`

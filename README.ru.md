@@ -68,3 +68,11 @@ cargo build --release --bin zero_top
 ## 🛡️ Журнал патчей и закрытых CVE
 
 Актуальный разбор мировых уязвимостей и безветвящихся мер противодействия ведётся в файле [SECURITY_ADVISORIES.md](SECURITY_ADVISORIES.md).
+
+---
+
+## 🖥️ Сбор на стоечный R&D-стенд (Dell PowerEdge R730 + 10GbE SFP+)
+
+Проект развивается как независимое открытое R&D-исследование детерминированного data-plane. Все средства направляются на покупку стоечного стенда (**Dell PowerEdge R730**, `2x Intel Xeon E5-2690 v4`, `Intel X520-DA2 10GbE SFP+`) для снятия аппаратных wire-to-wire замеров `XDP_DRV`, `Intel DDIO` и `Intel CAT` (L3 Cache Pinning).
+
+* **TON (The Open Network):** `UQBTjCDPiQIUl73F_1f-3ArppvjdfJ7mfONIyfDZl5d9z66Z`
