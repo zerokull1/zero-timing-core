@@ -29,3 +29,8 @@ panic = "abort"
 
 [profile.dev]
 panic = "abort"
+
+[[bin]]
+name = "zero_pure_asm_engine"
+path = "src/bin/zero_pure_asm_engine.rs"
+test = false
