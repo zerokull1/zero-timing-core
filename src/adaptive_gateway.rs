@@ -255,3 +255,45 @@ impl OnlineSentinelBot {
         }
     }
 }
+
+#[inline(always)]
+pub unsafe fn detect_ai_beacon_jitter_asm(
+    prev_delta_tsc: u64,
+    curr_delta_tsc: u64,
+    tolerance_shift: u8,
+) -> u32 {
+    if prev_delta_tsc < 10_000 || curr_delta_tsc < 10_000 {
+        return 0;
+    }
+    let tol = prev_delta_tsc >> (tolerance_shift & 15);
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        let mut verdict: u32 = 0;
+        asm!(
+            "mov {diff}, {curr}",
+            "sub {diff}, {prev}",
+            "mov {negd}, {diff}",
+            "neg {negd}",
+            "cmovs {diff}, {negd}",
+            "mov {one:e}, 1",
+            "cmp {diff}, {tol}",
+            "cmovb {res:e}, {one:e}",
+            curr = in(reg) curr_delta_tsc,
+            prev = in(reg) prev_delta_tsc,
+            tol = in(reg) tol,
+            diff = out(reg) _,
+            negd = out(reg) _,
+            one = out(reg) _,
+            res = inout(reg) verdict,
+            options(pure, nomem, nostack)
+        );
+        verdict
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let diff = curr_delta_tsc.abs_diff(prev_delta_tsc);
+        if diff < tol { 1 } else { 0 }
+    }
+}

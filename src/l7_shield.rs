@@ -369,3 +369,64 @@ pub unsafe fn inspect_ntp_guard_asm(payload: *const u8, len: usize) -> u64 { uns
         if mode >= 6 { VERDICT_NTP_BLOCK } else { 0 }
     }
 }}
+
+pub const VERDICT_RMM_SOHO_BLOCK: u64 = 0x14;
+
+#[inline(always)]
+pub unsafe fn inspect_rmm_soho_window_asm(payload: *const u8, len: usize, tcp_window: u16) -> u64 { unsafe {
+    if len == 0 || payload.is_null() {
+        return 0;
+    }
+    if len < 6 {
+        return if tcp_window < 64 { VERDICT_RMM_SOHO_BLOCK } else { 0 };
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    {
+        let q0 = core::ptr::read_unaligned(payload as *const u64);
+        let win = tcp_window as u32;
+        let mut verdict: u64 = 0;
+        asm!(
+            "mov {bad}, 0x14",
+            "cmp {win:e}, 64",
+            "cmovb {verd}, {bad}",
+            "cmp {q0:l}, 0x16",
+            "sete {t0:l}",
+            "mov {t1}, {q0}",
+            "shr {t1}, 8",
+            "cmp {t1:l}, 0x03",
+            "sete {t2:l}",
+            "and {t0:l}, {t2:l}",
+            "mov {t1}, {q0}",
+            "shr {t1}, 40",
+            "cmp {t1:l}, 0x01",
+            "sete {t2:l}",
+            "and {t0:l}, {t2:l}",
+            "cmp {win:e}, 4096",
+            "setb {t2:l}",
+            "and {t0:l}, {t2:l}",
+            "test {t0:l}, {t0:l}",
+            "cmovnz {verd}, {bad}",
+            q0 = in(reg) q0,
+            win = in(reg) win,
+            t0 = out(reg) _,
+            t1 = out(reg) _,
+            t2 = out(reg) _,
+            bad = out(reg) _,
+            verd = inout(reg) verdict,
+            options(pure, nomem, nostack)
+        );
+        verdict
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let b = core::slice::from_raw_parts(payload, 6);
+        let is_tls_hello = b[0] == 0x16 && b[1] == 0x03 && b[5] == 0x01;
+        if tcp_window < 64 || (is_tls_hello && tcp_window < 4096) {
+            VERDICT_RMM_SOHO_BLOCK
+        } else {
+            0
+        }
+    }
+}}
