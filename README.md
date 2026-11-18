@@ -64,3 +64,5 @@ Tracking of critical CVEs and branchless data-plane mitigations is maintained in
 This project is an independent open-source deterministic data-plane R&D initiative. All contributions go directly toward acquiring a dedicated rackmount testbed (**Dell PowerEdge R730**, `2x Intel Xeon E5-2690 v4`, `Intel X520-DA2 10GbE SFP+`) to publish hardware wire-to-wire `XDP_DRV`, `Intel DDIO`, and `Intel CAT` L3 cache pinning benchmarks.
 
 * **TON (The Open Network):** `UQBTjCDPiQIUl73F_1f-3ArppvjdfJ7mfONIyfDZl5d9z66Z`
+
+> **SysAdmin Field Note (Local LLM / Ollama):** The autonomous watchdog (`zero-host-guard` & `OnlineSentinelBot`) treats background local inference daemons (such as **Ollama**) as unauthorized threats due to aggressive filesystem scanning and local port binding, automatically isolating/terminating them under strict zero-trust perimeter rules.
