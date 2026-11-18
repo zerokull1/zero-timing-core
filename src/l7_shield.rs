@@ -430,3 +430,23 @@ pub unsafe fn inspect_rmm_soho_window_asm(payload: *const u8, len: usize, tcp_wi
         }
     }
 }}
+
+
+/// Безветвящаяся проверка отсутствия IPv4 Options (IHL == 5) против CVE-2026-98432 (~2 такта).
+#[inline(always)]
+pub fn verify_ipv4_no_options_asm(ver_ihl: u8) -> u32 {
+    let verdict: u32;
+    unsafe {
+        core::arch::asm!(
+            "and {tmp:e}, 0x0F",
+            "cmp {tmp:e}, 5",
+            "setne {out}",
+            "movzx {verdict:e}, {out}",
+            tmp = inout(reg) (ver_ihl as u32) => _,
+            out = out(reg_byte) _,
+            verdict = out(reg) verdict,
+            options(pure, nomem, nostack)
+        );
+    }
+    verdict
+}
