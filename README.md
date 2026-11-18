@@ -50,3 +50,9 @@ echo const256 | sudo tee /proc/zero_timing_ring0
 cargo build --release --bin zero_top
 ./target/release/zero_top
 ```
+
+---
+
+## 🛡️ Security Advisories & Mitigation Log
+
+Tracking of critical CVEs and branchless data-plane mitigations is maintained in [SECURITY_ADVISORIES.md](SECURITY_ADVISORIES.md).

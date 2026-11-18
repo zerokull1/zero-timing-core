@@ -62,3 +62,9 @@ echo const256 | sudo tee /proc/zero_timing_ring0
 cargo build --release --bin zero_top
 ./target/release/zero_top
 ```
+
+---
+
+## 🛡️ Журнал патчей и закрытых CVE
+
+Актуальный разбор мировых уязвимостей и безветвящихся мер противодействия ведётся в файле [SECURITY_ADVISORIES.md](SECURITY_ADVISORIES.md).
