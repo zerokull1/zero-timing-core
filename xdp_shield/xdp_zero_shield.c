@@ -91,6 +91,24 @@ int xdp_zero_shield_prog(struct xdp_md *ctx) {
             }
         }
 
+        /* CVE-2026-11642: QUIC RFC 9000 Initial (<1200B) & Fake Version Negotiation Guard */
+        if (udp->dest == bpf_htons(443)) {
+            if ((void *)(upayload + 6) > data_end) {
+                __sync_fetch_and_add(&st->dropped_null_tcp, 1);
+                return XDP_DROP;
+            }
+            __u8  q_flags = upayload[0];
+            __u32 q_ver   = bpf_ntohl(*(__u32 *)(upayload + 1));
+            if (q_flags & 0x80) {
+                __u8 q_type = (q_flags >> 4) & 0x03;
+                __u32 frame_len = (__u32)((void *)data_end - (void *)eth);
+                if (q_ver == 0 || ((q_type == 0 || q_type == 1) && frame_len < 1200)) {
+                    __sync_fetch_and_add(&st->dropped_tls_splitting, 1);
+                    return XDP_DROP;
+                }
+            }
+        }
+
         if (udp->dest == bpf_htons(123)) {
             if ((void *)(upayload + 48) > data_end) {
                 __sync_fetch_and_add(&st->dropped_null_tcp, 1);

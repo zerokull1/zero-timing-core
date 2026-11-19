@@ -26,3 +26,5 @@
 
 | **CVE-2026-11204** (CVSS 8.6) | ISC BIND 9 / Unbound DNS Resolver Compression Loop (`QDCOUNT == 0` / `ANCOUNT > 0`) | `xdp_shield/xdp_zero_shield.c` | Mitigated (Pre-stack UDP/53 DNS header validation & `XDP_DROP`) |
 | **CVE-2026-10891** (CVSS 9.1) | OpenSSL / BoringSSL TLS 1.3 `ClientHello` Zero/Odd Cipher Suite Overflow | `xdp_shield/xdp_zero_shield.c`, `src/l7_shield.rs` | Mitigated (XDP `ClientHello` cipher-suite length boundary check before socket enqueue) |
+
+| **CVE-2026-11642** (CVSS 8.8) | QUIC / HTTP/3 Stack Amplification & Fake Version Negotiation Loop (`UDP/443`) | `xdp_shield/xdp_zero_shield.c`, `src/l7_shield.rs` | Mitigated (`RFC 9000 §14.1` Initial `< 1200B` & `Version == 0` `XDP_DROP`) |
