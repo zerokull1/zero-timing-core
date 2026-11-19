@@ -34,3 +34,8 @@ panic = "abort"
 name = "zero_pure_asm_engine"
 path = "src/bin/zero_pure_asm_engine.rs"
 test = false
+
+[[bin]]
+name = "zero_elastic_core"
+path = "src/bin/zero_elastic_core.rs"
+test = false

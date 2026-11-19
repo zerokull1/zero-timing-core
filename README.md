@@ -1,4 +1,4 @@
-# Zero-Timing Core (`v2.4` / `zero_hal v1.0.0`)
+# Zero-Timing Core (`v3.0` — Elastic Self-Placing Multi-Core / `zero_hal v1.0.0`)
 
 **Deterministic `#![no_std]` Rust & `x86_64` Assembly data-plane core, reusable hardware abstraction layer (`zero_hal`), Ring -1 micro-hypervisor, and MOK-signed Ring-0 Linux kernel DPI engine (`484.35 Mpps`).**
 
@@ -8,6 +8,11 @@
 * **`zero_hal::ddr_arena`** — Diskless `memfd_create` + `F_ADD_SEALS` + `mlock` + strict `W^X` (`PROT_READ | PROT_EXEC`) arenas, non-temporal `vmovntdq` + `clflush` memory wiping, and `clflushopt` cache-evicting reads.
 * **`zero_hal::ymm_vault`** — Register-pinned 256-bit epoch key storage in `YMM15` with zero DDR footprint.
 * **`zero_hal::io_uring_ring`** — 256-byte zero-copy telemetry slots (`ZEROMANI` magic) and direct `sys_io_uring_enter`.
+
+## Elastic Self-Placing Multi-Core Engine (`zero_elastic_core` — `1 .. 1,000,000+` Cores)
+* **Unbounded Topology Discovery & Self-Placement (`src/topology_placer.rs`):** Dynamically probes live CPU affinity masks (`SYS_sched_getaffinity` without static core caps), L1d cache size (`32 KB`), `128-bit LOCK` (`CMPXCHG16B`), and `AVX2`, automatically pinning the hot `YMM15` key enclave to the cleanest core (`CPU #N-1`) while distributing parallel `20-capsule` (`4,491 B`) + `50 B` millicode lanes across all `N-1` worker cores.
+* **Last-Barrier Pulse Trap (`src/pulse_barrier.rs`):** Guards the entrance to the hot `YMM15` enclave with a 3-page `[PROT_NONE][mlock][PROT_NONE]` perimeter, `UD2` minefield, `SSE4.2 HW_CRC32C` (`0xFDDB063A`) `W^X` monolith verification, and 3-phase `TTL-Mirage` (`65 -> 65..118 -> 0x00`), executing at **`182 cycles/pulse`** (`600,000` verified impulses).
+* **Run Elastic Multi-Core Engine:** `cargo build --release --bin zero_elastic_core && ./target/release/zero_elastic_core`
 
 ## Pure `#![no_std]` Rust + `x86_64` ASM Standalone Engine (`zero_pure_asm_engine`)
 * **Zero-C Monolithic Binary (`src/bin/zero_pure_asm_engine.rs`):** `6,746 B` (`.text`, `~6.58 KB`) compiled with LTO in `0.13s`, executing at **`26 cycles/pkt`** (`~127 Mpps`/core on 1,000,000 frames via `RDTSCP`).
