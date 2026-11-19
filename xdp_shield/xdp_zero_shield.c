@@ -143,6 +143,18 @@ int xdp_zero_shield_prog(struct xdp_md *ctx) {
                 return XDP_DROP;
             }
 
+            /* CVE-2026-123007 (NGINX2Root) & CVE-2026-119618: RFC 9113 HTTP/2 Frame Guard */
+            if (tcp->dest == bpf_htons(80) || tcp->dest == bpf_htons(8080)) {
+                __u32 h2_hdr = bpf_ntohl((__u32)(q0 & 0xFFFFFFFFULL));
+                __u32 h2_len = h2_hdr >> 8;
+                __u8  h2_typ = (__u8)(h2_hdr & 0xFF);
+                __u8  h2_flg = (__u8)((q0 >> 32) & 0xFF);
+                if (h2_len > 16384 || ((h2_flg & 0x08) && h2_len == 0 && h2_typ <= 5)) {
+                    st->dropped_l7_smuggling++;
+                    return XDP_DROP;
+                }
+            }
+
             if (tcp->dest == bpf_htons(443)) {
                 __u8 rec_type = (__u8)(q0 & 0xFF);
                 __u8 maj_ver  = (__u8)((q0 >> 8) & 0xFF);

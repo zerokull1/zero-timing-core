@@ -16,3 +16,7 @@
 
 ## Воспроизводимый профиль периметра хоста
 Эталонные правила `nftables` (`hook prerouting priority raw`) и параметры `sysctl` сохранены в каталоге `tools/host_hardening/`.
+
+| **CVE-2026-123007** (`NGINX2Root`, CVSS 9.2) | HTTP/2 Frame Memory Corruption / RCE (`1.9.5`–`1.31.8`) | `xdp_shield/xdp_zero_shield.c` | Mitigated (`RFC 9113` SWAR frame length `> 16384` & zero-length `PADDED` drop in XDP) |
+| **CVE-2026-119618** (CVSS 9.8) | Apache `mod_http2` Malformed Frame RCE | `xdp_shield/xdp_zero_shield.c` | Mitigated (Pre-stack `XDP_DROP` on oversized/malformed HTTP/2 frames) |
+| **CVE-2026-48710** (CISA KEV 18.11.2026) | Kludex Starlette HTTP Request/Response Smuggling | `src/l7_shield.rs`, `xdp_zero_shield.c` | Mitigated (Branchless `x86_64` ASM `CL.TE` / `TE.CL` smuggling scanner) |
