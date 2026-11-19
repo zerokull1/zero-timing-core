@@ -4,7 +4,7 @@
 use core::arch::{asm, global_asm};
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use zero_core_lib::pulse_barrier::{seal_and_verify_monolith_wx, SealedHotPerimeter};
-use zero_core_lib::topology_placer::{discover_hardware_and_place, pin_current_thread_to_core, sys_mmap_anon, ImpulseSlot};
+use zero_core_lib::topology_placer::{discover_hardware_and_place, pin_current_thread_to_core, sys_mmap_anon, CoreEntry, ImpulseSlot};
 use zero_core_lib::work_stealer::{pop_or_steal_batch, CoreWorkDeque};
 
 static MONOLITH_20CAPS: &[u8] = include_bytes!("../../build_core_bundle/zeromani_20caps.bin");
@@ -40,7 +40,7 @@ extern "C" fn worker_core_entry(slot: *mut ImpulseSlot) -> usize {
         let mut local_seq = 0u64;
         while let Some((b_start, b_end)) = pop_or_steal_batch(deques, nw, my_idx, 256) {
             for id in b_start..b_end {
-                if my_idx == 0 { for _ in 0..80 { asm!("pause", options(nomem, nostack)); } } // Имитация IRQ-перекоса на CPU #0
+                if my_idx == 0 { for _ in 0..2500 { asm!("pause", options(nomem, nostack)); } } // Имитация IRQ-перекоса на CPU #0
                 local_seq += 1;
                 s.ttl_phase = 65;
                 s.payload_hash.store(id ^ (s.worker_cpu_id as u64 * 0x5A45524F), Ordering::Relaxed);
@@ -58,8 +58,8 @@ extern "C" fn worker_core_entry(slot: *mut ImpulseSlot) -> usize {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn elastic_core_main() -> usize {
     unsafe {
-        let mut cpu_ids: *mut u32 = core::ptr::null_mut();
-        let hw = discover_hardware_and_place(&mut cpu_ids);
+        let mut entries: *mut CoreEntry = core::ptr::null_mut();
+        let hw = discover_hardware_and_place(&mut entries);
         pin_current_thread_to_core(hw.hot_core_id);
         let wx = seal_and_verify_monolith_wx(MONOLITH_20CAPS, MILLICODE_VM, OMNI_MCODE_50B);
         let perim = match SealedHotPerimeter::arm() { Some(p) if !wx.is_null() => p, _ => return 98 };
@@ -74,10 +74,10 @@ pub unsafe extern "C" fn elastic_core_main() -> usize {
 
         let mut w_idx = 0usize;
         for i in 0..hw.total_cores {
-            let cid = *cpu_ids.add(i) as usize;
+            let ent = *entries.add(i); let cid = ent.cpu_id as usize;
             if (hw.total_cores > 1 && cid == hw.hot_core_id) || w_idx >= nw { continue; }
             let sl = slots.add(w_idx); (*sl).worker_cpu_id = cid as u32; (*sl).ttl_phase = w_idx as u32;
-            (*deques.add(w_idx)).init(cid as u32, 0, (w_idx as u64) * 200_000, ((w_idx + 1) as u64) * 200_000);
+            (*sl).numa_node = ent.numa_node; (*deques.add(w_idx)).init(cid as u32, ent.numa_node, (w_idx as u64) * 10_000_000, ((w_idx + 1) as u64) * 10_000_000);
             spawn_raw_worker(0x00010F00, sys_mmap_anon(16384).add(16384), worker_core_entry, sl);
             w_idx += 1;
         }
@@ -99,7 +99,7 @@ pub unsafe extern "C" fn elastic_core_main() -> usize {
         fn put_u64(b: &mut [u8], p: &mut usize, mut v: u64) { let mut d = [0u8; 20]; let mut k = 0; if v == 0 { unsafe { *d.as_mut_ptr() = b'0'; } k = 1; } while v > 0 { d[k] = b'0' + (v % 10) as u8; v /= 10; k += 1; } while k > 0 { k -= 1; b[*p] = d[k]; *p += 1; } }
         fn put_s(b: &mut [u8], p: &mut usize, s: &[u8]) { b[*p..*p+s.len()].copy_from_slice(s); *p += s.len(); }
         let mut buf = [0u8; 128]; let mut pos = 0;
-        put_s(&mut buf, &mut pos, b"[WORK-STEALING] PULSES="); put_u64(&mut buf, &mut pos, total);
+        put_s(&mut buf, &mut pos, b"[WORK-STEALING] NUMA="); put_u64(&mut buf, &mut pos, hw.numa_nodes as u64); put_s(&mut buf, &mut pos, b" | PULSES="); put_u64(&mut buf, &mut pos, total);
         put_s(&mut buf, &mut pos, b" | STOLEN_FROM_BUSY_CPU="); put_u64(&mut buf, &mut pos, TOTAL_STOLEN.load(Ordering::Relaxed));
         put_s(&mut buf, &mut pos, b" | CYCLES/PULSE="); put_u64(&mut buf, &mut pos, t1.saturating_sub(t0) / total.max(1));
         put_s(&mut buf, &mut pos, b"\n");
