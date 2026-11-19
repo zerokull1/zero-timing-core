@@ -101,7 +101,7 @@ pub unsafe extern "C" fn elastic_core_main() -> usize {
         let mut entries: *mut CoreEntry = core::ptr::null_mut();
         let hw = discover_hardware_and_place(&mut entries);
         pin_current_thread_to_core(hw.hot_core_id);
-        let mut synth_mono = [0x90u8; 352]; synth_mono[0..8].copy_from_slice(&0x494E414D4F52455Au64.to_le_bytes()); synth_mono[8..12].copy_from_slice(&20u32.to_le_bytes()); synth_mono[16..20].copy_from_slice(&0x5A45524Fu32.to_le_bytes()); let synth_vm = [0x90u8; 314]; let synth_mcode = [0x00u8; 50]; let wx = seal_and_verify_monolith_wx(&synth_mono, &synth_vm, &synth_mcode);
+        let mut synth_mono = [0u8; 352]; synth_mono[0..8].copy_from_slice(&0x494E414D4F52455Au64.to_le_bytes()); synth_mono[8..12].copy_from_slice(&19u32.to_le_bytes()); let mut c: u32 = 0x5A45524F; let mut k = 0; while k < 16 { unsafe { core::arch::asm!("crc32 {c:e}, {v:e}", c = inout(reg) c, v = in(reg) 0u32, options(nomem, nostack)); } k += 4; } synth_mono[16..20].copy_from_slice(&c.to_le_bytes()); let synth_vm = [0x90u8; 314]; let synth_mcode = [0x00u8; 50]; let wx = seal_and_verify_monolith_wx(&synth_mono, &synth_vm, &synth_mcode);
         let perim = match SealedHotPerimeter::arm() {
             Some(p) if !wx.is_null() => p,
             _ => return 98,
