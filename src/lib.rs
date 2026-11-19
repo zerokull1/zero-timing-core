@@ -13,6 +13,7 @@ pub mod flow_table;
 pub mod telemetry_shm;
 pub mod topology_placer;
 pub mod pulse_barrier;
+pub mod work_stealer;
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn memcpy(dst: *mut core::ffi::c_void, src: *const core::ffi::c_void, count: usize) -> *mut core::ffi::c_void {
