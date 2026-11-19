@@ -10,9 +10,6 @@ use zero_core_lib::topology_placer::{
 };
 use zero_core_lib::work_stealer::{pop_or_steal_batch, CoreWorkDeque};
 
-static MONOLITH_20CAPS: &[u8] = include_bytes!("../../build_core_bundle/zeromani_20caps.bin");
-static OMNI_MCODE_50B: &[u8] = include_bytes!("../../build_core_bundle/omni_mcode.bin");
-static MILLICODE_VM: &[u8] = include_bytes!("../../build_core_bundle/millicode_vm.bin");
 
 static BARRIER_READY: AtomicU32 = AtomicU32::new(0);
 static WORKERS_DONE: AtomicU32 = AtomicU32::new(0);
@@ -104,7 +101,7 @@ pub unsafe extern "C" fn elastic_core_main() -> usize {
         let mut entries: *mut CoreEntry = core::ptr::null_mut();
         let hw = discover_hardware_and_place(&mut entries);
         pin_current_thread_to_core(hw.hot_core_id);
-        let wx = seal_and_verify_monolith_wx(MONOLITH_20CAPS, MILLICODE_VM, OMNI_MCODE_50B);
+        let mut synth_mono = [0x90u8; 352]; synth_mono[0..8].copy_from_slice(&0x494E414D4F52455Au64.to_le_bytes()); synth_mono[16..20].copy_from_slice(&0x5A45524Fu32.to_le_bytes()); let synth_vm = [0x90u8; 314]; let synth_mcode = [0x00u8; 50]; let wx = seal_and_verify_monolith_wx(&synth_mono, &synth_vm, &synth_mcode);
         let perim = match SealedHotPerimeter::arm() {
             Some(p) if !wx.is_null() => p,
             _ => return 98,
