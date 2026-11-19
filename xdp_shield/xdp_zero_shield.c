@@ -76,6 +76,21 @@ int xdp_zero_shield_prog(struct xdp_md *ctx) {
         if ((void *)(udp + 1) > data_end) return XDP_DROP;
         __u8 *upayload = (__u8 *)(udp + 1);
 
+        /* CVE-2026-11204: DNS Resolver Compression Loop & Zero-QDCOUNT Guard */
+        if (udp->dest == bpf_htons(53)) {
+            if ((void *)(upayload + 12) > data_end) {
+                __sync_fetch_and_add(&st->dropped_null_tcp, 1);
+                return XDP_DROP;
+            }
+            __u16 dns_flags = bpf_ntohs(*(__u16 *)(upayload + 2));
+            __u16 qdcount   = bpf_ntohs(*(__u16 *)(upayload + 4));
+            __u16 ancount   = bpf_ntohs(*(__u16 *)(upayload + 6));
+            if ((dns_flags & 0x8000) == 0 && (qdcount == 0 || ancount > 0)) {
+                __sync_fetch_and_add(&st->dropped_null_tcp, 1);
+                return XDP_DROP;
+            }
+        }
+
         if (udp->dest == bpf_htons(123)) {
             if ((void *)(upayload + 48) > data_end) {
                 __sync_fetch_and_add(&st->dropped_null_tcp, 1);
@@ -166,9 +181,21 @@ int xdp_zero_shield_prog(struct xdp_md *ctx) {
                 __u8 maj_ver  = (__u8)((q0 >> 8) & 0xFF);
                 __u16 rlen_be = (__u16)((q0 >> 24) & 0xFFFF);
                 __u16 rlen    = bpf_ntohs(rlen_be);
-                if (rec_type == 0x16 && maj_ver == 0x03 && rlen < 40) {
-                    st->dropped_tls_splitting++;
-                    return XDP_DROP;
+                if (rec_type == 0x16 && maj_ver == 0x03) {
+                    if (rlen < 40) {
+                        st->dropped_tls_splitting++;
+                        return XDP_DROP;
+                    }
+                    /* CVE-2026-10891: TLS 1.3 ClientHello Zero/Odd Cipher Suite Guard */
+                    if (((q0 >> 40) & 0xFF) == 0x01 && (void *)(payload + 46) <= data_end) {
+                        if (*(payload + 43) == 0) {
+                            __u16 cs_len = bpf_ntohs(*(__u16 *)(payload + 44));
+                            if (cs_len == 0 || (cs_len & 1)) {
+                                st->dropped_tls_splitting++;
+                                return XDP_DROP;
+                            }
+                        }
+                    }
                 }
             }
         }

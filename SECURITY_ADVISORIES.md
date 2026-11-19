@@ -23,3 +23,6 @@
 
 | **CVE-2026-0118** (CVSS 9.6) | Palo Alto PAN-OS GlobalProtect Pre-Auth Path/Delimiter Injection (`..;/`) | `xdp_shield/xdp_zero_shield.c` | Mitigated (32-bit SWAR URI delimiter `0x2F3B2E2E` drop in XDP before `sk_buff`) |
 | **CVE-2026-10479** (CVSS 9.3, CISA KEV) | Citrix NetScaler ADC / Gateway Pre-Auth Header Buffer Overflow | `xdp_shield/xdp_zero_shield.c`, `src/l7_shield.rs` | Mitigated (Pre-stack XDP URI/header guard + constant-time L7 boundary check) |
+
+| **CVE-2026-11204** (CVSS 8.6) | ISC BIND 9 / Unbound DNS Resolver Compression Loop (`QDCOUNT == 0` / `ANCOUNT > 0`) | `xdp_shield/xdp_zero_shield.c` | Mitigated (Pre-stack UDP/53 DNS header validation & `XDP_DROP`) |
+| **CVE-2026-10891** (CVSS 9.1) | OpenSSL / BoringSSL TLS 1.3 `ClientHello` Zero/Odd Cipher Suite Overflow | `xdp_shield/xdp_zero_shield.c`, `src/l7_shield.rs` | Mitigated (XDP `ClientHello` cipher-suite length boundary check before socket enqueue) |
