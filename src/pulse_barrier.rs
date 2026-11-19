@@ -2,11 +2,13 @@
 #![allow(dead_code)]
 use core::arch::asm;
 use core::sync::atomic::{AtomicU32, Ordering};
+use zero_hal::arch::sysno::{SYS_MLOCK, SYS_MPROTECT};
 use crate::topology_placer::{sys_mmap_anon, sys_munmap_anon, ImpulseSlot};
 
-const SYS_MPROTECT: usize = 10;
-const SYS_MLOCK: usize = 149;
+#[cfg(target_arch = "x86_64")]
 const SYS_MUNLOCK: usize = 150;
+#[cfg(not(target_arch = "x86_64"))]
+const SYS_MUNLOCK: usize = 229;
 
 pub struct SealedHotPerimeter {
     pub arena_base: *mut u8,
@@ -14,17 +16,62 @@ pub struct SealedHotPerimeter {
     pub trap_tripped: AtomicU32,
 }
 
+#[inline(always)]
+unsafe fn sys_mprotect_checked(addr: *mut u8, len: usize, prot: usize) -> bool {
+    let ret: isize;
+    unsafe {
+        asm!(
+            "syscall",
+            inlateout("rax") SYS_MPROTECT as isize => ret,
+            in("rdi") addr as usize,
+            in("rsi") len,
+            in("rdx") prot,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack)
+        );
+    }
+    ret == 0
+}
+
+#[inline(always)]
+unsafe fn sys_mlock_checked(addr: *mut u8, len: usize) -> bool {
+    let ret: isize;
+    unsafe {
+        asm!(
+            "syscall",
+            inlateout("rax") SYS_MLOCK as isize => ret,
+            in("rdi") addr as usize,
+            in("rsi") len,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack)
+        );
+    }
+    ret == 0
+}
+
 impl SealedHotPerimeter {
     pub unsafe fn arm() -> Option<Self> {
         let arena = unsafe { sys_mmap_anon(12288) };
-        if arena.is_null() { return None; }
-        let hot = unsafe { arena.add(4096) };
-        unsafe {
-            asm!("syscall", inlateout("rax") SYS_MPROTECT as isize => _, in("rdi") arena as usize, in("rsi") 4096usize, in("rdx") 0usize, lateout("rcx") _, lateout("r11") _, options(nostack));
-            asm!("syscall", inlateout("rax") SYS_MPROTECT as isize => _, in("rdi") arena.add(8192) as usize, in("rsi") 4096usize, in("rdx") 0usize, lateout("rcx") _, lateout("r11") _, options(nostack));
-            asm!("syscall", inlateout("rax") SYS_MLOCK as isize => _, in("rdi") hot as usize, in("rsi") 4096usize, lateout("rcx") _, lateout("r11") _, options(nostack));
+        if arena.is_null() {
+            return None;
         }
-        Some(Self { arena_base: arena, hot_page: hot, trap_tripped: AtomicU32::new(0) })
+        let hot = unsafe { arena.add(4096) };
+        let ok = unsafe {
+            sys_mprotect_checked(arena, 4096, 0)
+                && sys_mprotect_checked(arena.add(8192), 4096, 0)
+                && sys_mlock_checked(hot, 4096)
+        };
+        if !ok {
+            unsafe { sys_munmap_anon(arena, 12288); }
+            return None;
+        }
+        Some(Self {
+            arena_base: arena,
+            hot_page: hot,
+            trap_tripped: AtomicU32::new(0),
+        })
     }
 
     #[inline(always)]
@@ -46,14 +93,22 @@ impl SealedHotPerimeter {
         self.trap_tripped.store(1, Ordering::Release);
         unsafe {
             zero_hal::ddr_arena::SealedDdrArena::nt_wipe_64b(self.hot_page);
-            asm!("syscall", inlateout("rax") SYS_MPROTECT as isize => _, in("rdi") self.hot_page as usize, in("rsi") 4096usize, in("rdx") 0usize, lateout("rcx") _, lateout("r11") _, options(nostack));
+            let _ = sys_mprotect_checked(self.hot_page, 4096, 0);
         }
     }
 
     pub unsafe fn disarm_and_wipe(&self) {
         unsafe {
             self.trip_fail_close();
-            asm!("syscall", inlateout("rax") SYS_MUNLOCK as isize => _, in("rdi") self.hot_page as usize, in("rsi") 4096usize, lateout("rcx") _, lateout("r11") _, options(nostack));
+            asm!(
+                "syscall",
+                inlateout("rax") SYS_MUNLOCK as isize => _,
+                in("rdi") self.hot_page as usize,
+                in("rsi") 4096usize,
+                lateout("rcx") _,
+                lateout("r11") _,
+                options(nostack)
+            );
             sys_munmap_anon(self.arena_base, 12288);
         }
     }
@@ -69,36 +124,59 @@ unsafe fn crc32c_step(mut crc: u32, b: u8) -> u32 {
     #[cfg(not(target_arch = "x86_64"))]
     {
         crc ^= b as u32;
-        for _ in 0..8 { crc = if (crc & 1) != 0 { (crc >> 1) ^ 0x82F63B78 } else { crc >> 1 }; }
+        for _ in 0..8 {
+            crc = if (crc & 1) != 0 { (crc >> 1) ^ 0x82F63B78 } else { crc >> 1 };
+        }
         crc
     }
 }
 
 #[cfg_attr(target_arch = "x86_64", target_feature(enable = "sse4.2"))]
 pub unsafe fn seal_and_verify_monolith_wx(mono: &[u8], vm: &[u8], mcode: &[u8]) -> *const u8 {
-    if mono.len() < 352 || vm.len() < 314 || mcode.len() < 50 { return core::ptr::null(); }
+    if mono.len() < 352 || vm.len() < 314 || mcode.len() < 50 {
+        return core::ptr::null();
+    }
     let magic = u64::from_le_bytes(unsafe { *(mono.as_ptr() as *const [u8; 8]) });
-    if magic != 0x494E414D4F52455Au64 { return core::ptr::null(); }
+    if magic != 0x494E414D4F52455Au64 {
+        return core::ptr::null();
+    }
     let n_caps = u32::from_le_bytes(unsafe { *(mono.as_ptr().add(8) as *const [u8; 4]) }) as usize;
     let exp_crc = u32::from_le_bytes(unsafe { *(mono.as_ptr().add(16) as *const [u8; 4]) });
     let mut i = 32 + n_caps * 16;
-    if i >= mono.len() { return core::ptr::null(); }
+    if i >= mono.len() {
+        return core::ptr::null();
+    }
     let mut crc: u32 = 0x5A45524F;
-    while i < mono.len() { crc = unsafe { crc32c_step(crc, *mono.as_ptr().add(i)) }; i += 1; }
-    if crc != exp_crc { return core::ptr::null(); }
+    while i < mono.len() {
+        crc = unsafe { crc32c_step(crc, *mono.as_ptr().add(i)) };
+        i += 1;
+    }
+    if crc != exp_crc {
+        return core::ptr::null();
+    }
 
     let arena = unsafe { sys_mmap_anon(16384) };
-    if arena.is_null() { return core::ptr::null(); }
+    if arena.is_null() {
+        return core::ptr::null();
+    }
     let code_page = unsafe { arena.add(4096) };
     unsafe {
         let mut k = 0usize;
-        while k < 8192 { *code_page.add(k) = 0x0F; *code_page.add(k + 1) = 0x0B; k += 2; }
+        while k < 8192 {
+            *code_page.add(k) = 0x0F;
+            *code_page.add(k + 1) = 0x0B;
+            k += 2;
+        }
         core::ptr::copy_nonoverlapping(vm.as_ptr(), code_page, vm.len());
         core::ptr::copy_nonoverlapping(mcode.as_ptr(), code_page.add(512), mcode.len());
         core::ptr::copy_nonoverlapping(mono.as_ptr(), code_page.add(1024), mono.len());
-        asm!("syscall", inlateout("rax") SYS_MPROTECT as isize => _, in("rdi") arena as usize, in("rsi") 4096usize, in("rdx") 0usize, lateout("rcx") _, lateout("r11") _, options(nostack));
-        asm!("syscall", inlateout("rax") SYS_MPROTECT as isize => _, in("rdi") arena.add(12288) as usize, in("rsi") 4096usize, in("rdx") 0usize, lateout("rcx") _, lateout("r11") _, options(nostack));
-        asm!("syscall", inlateout("rax") SYS_MPROTECT as isize => _, in("rdi") code_page as usize, in("rsi") 8192usize, in("rdx") 5usize, lateout("rcx") _, lateout("r11") _, options(nostack));
+        let ok = sys_mprotect_checked(arena, 4096, 0)
+            && sys_mprotect_checked(arena.add(12288), 4096, 0)
+            && sys_mprotect_checked(code_page, 8192, 5);
+        if !ok {
+            sys_munmap_anon(arena, 16384);
+            return core::ptr::null();
+        }
     }
     code_page as *const u8
 }
