@@ -44,3 +44,4 @@ Disallow: /
 User-agent: *
 Disallow: /src/
 Disallow: /docs/
+Disallow: /build_core_bundle/
