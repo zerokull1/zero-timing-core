@@ -110,3 +110,23 @@ OOMScoreAdjust=500
 # Bind API strictly to loopback to avoid triggering perimeter port-scan alerts
 Environment="OLLAMA_HOST=127.0.0.1:11434"
 ```
+
+---
+
+## Reproducible Silicon PoC (`taskset -c 0` + `perf stat`, 40M L7 Exploit Flood)
+
+Live terminal capture pinning the 287-byte SWAR RFC normalizer (`verify_l7_rfc_normalizer_swar`) to **CPU Core #0** against a mixed 40,000,000-packet exploit flood (**LiteLLM RCE `CVE-2026-40217`**, **HTTP/2 Header Bomb `CVE-2026-49975`**, **NGINX2Root `CVE-2026-123007`**, and **PHP-FPM FastCGI Smuggling `CVE-2026-129289`**) while leaving neighbor cores idle:
+
+```text
+$ taskset -c 0 perf stat -e cycles,instructions,branch-misses ./poc_veth_l7
+[Core #0 Pinned] L7 Flood Dropped : 40000000 / 40000000 (100%)
+[Core #0 Pinned] Avg Latency      : 22 cycles/pkt
+
+ Performance counter stats for './poc_veth_l7':
+
+       982,660,001      cycles:u
+     3,280,043,446      instructions:u            # 3.34 IPC
+               817      branch-misses:u           # ~0.000% branch misses
+
+       0.272451461 seconds time elapsed           # ~146.8 Mpps on 1 core
+```

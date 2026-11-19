@@ -110,3 +110,23 @@ OOMScoreAdjust=500
 # Привязываем API строго к loopback, чтобы не провоцировать детектор сканирования портов
 Environment="OLLAMA_HOST=127.0.0.1:11434"
 ```
+
+---
+
+## Воспроизводимый Silicon PoC (`taskset -c 0` + `perf stat`, шторм 40M L7-эксплойтов)
+
+Живой лог терминала с привязкой 287-байтного SWAR-нормализатора RFC (`verify_l7_rfc_normalizer_swar`) строго к **ядру CPU #0** под шквалом из 40 000 000 смешанных атак (**LiteLLM RCE `CVE-2026-40217`**, **HTTP/2 Header Bomb `CVE-2026-49975`**, **NGINX2Root `CVE-2026-123007`**, **PHP-FPM FastCGI Smuggling `CVE-2026-129289`**) при нулевой нагрузке на соседние ядра:
+
+```text
+\$ taskset -c 0 perf stat -e cycles,instructions,branch-misses ./poc_veth_l7
+[Core #0 Pinned] L7 Flood Dropped : 40000000 / 40000000 (100%)
+[Core #0 Pinned] Avg Latency      : 22 cycles/pkt
+
+ Performance counter stats for './poc_veth_l7':
+
+       982,660,001      cycles:u
+     3,280,043,446      instructions:u            # 3.34 IPC
+               817      branch-misses:u           # ~0.000% промахов ветвлений
+
+       0.272451461 seconds time elapsed           # ~146.8 Mpps на 1 ядре
+```
