@@ -450,3 +450,60 @@ pub fn verify_ipv4_no_options_asm(ver_ihl: u8) -> u32 {
     }
     verdict
 }
+
+/// Единый безветвящийся SWAR-нормализатор инвариантов RFC 9000 / 9112 / 9113
+/// (закрывает пачку CVE-2026: PHP-FPM Smuggling CVE-2026-129289, NGINX2Root CVE-2026-123007,
+/// H2 Near-Empty Bomb CVE-2026-49975, LiteLLM RCE CVE-2026-40217, QUIC RFC 9000 CVE-2026-95691).
+#[inline(always)]
+pub unsafe fn verify_l7_rfc_normalizer_swar(payload: *const u8, len: usize) -> u32 {
+    if len < 16 || payload.is_null() {
+        return 1;
+    }
+
+    let (w0, w1, tail) = unsafe {
+        (
+            (payload as *const u64).read_unaligned(),
+            (payload.add(8) as *const u64).read_unaligned(),
+            (payload.add(len - 8) as *const u64).read_unaligned(),
+        )
+    };
+    let b0 = (w0 & 0xFF) as u8;
+
+    // 1. QUIC RFC 9000 (CVE-2026-95691 / CVE-2026-88822):
+    let is_quic_long = ((b0 & 0x80) != 0) as u32;
+    let ver_be = u32::from_be((w0 >> 8) as u32);
+    let valid_ver = ((ver_be == 0x0000_0001) | (ver_be == 0x6b33_43cf)) as u32;
+    let pkt_type = (b0 & 0x30) >> 4;
+    let short_initial = ((pkt_type == 0) & (len < 1200)) as u32;
+    let mut drop_mask = is_quic_long & ((valid_ver ^ 1) | short_initial);
+
+    // 2. HTTP/2 RFC 9113 (NGINX2Root CVE-2026-123007 + Near-Empty Bomb CVE-2026-49975):
+    let h2_hdr = u32::from_be(w0 as u32);
+    let h2_len = h2_hdr >> 8;
+    let h2_type = (h2_hdr & 0xFF) as u8;
+    let is_h2_hdr = ((h2_type == 0x01) | (h2_type == 0x09)) as u32;
+    let bad_h2_len = ((h2_len < 6) | (h2_len > 16384)) as u32;
+    let is_h2_win = (h2_type == 0x08) as u32;
+    let win_inc = u32::from_be((w1 >> 8) as u32) & 0x7FFF_FFFF;
+    let bad_win = ((win_inc == 0) | (win_inc > 0x3FFF_FFFF)) as u32;
+    let maybe_h2 = ((is_quic_long == 0) & (b0 == 0x00) & (h2_type <= 0x09)) as u32;
+    drop_mask |= maybe_h2 & ((is_h2_hdr & bad_h2_len) | (is_h2_win & bad_win));
+
+    // 3. BerriAI LiteLLM RCE (CVE-2026-40217): "/guardra" из регистров w0/w1 без лишних чтений
+    let verb32 = (w0 & 0xFFFF_FFFF) as u32;
+    let is_get = (verb32 == 0x2054_4547) as u32;
+    let is_post = (verb32 == 0x5453_4F50) as u32;
+    let uri_from_get = (w0 >> 32) | (w1 << 32);
+    let uri_from_post = (w0 >> 40) | (w1 << 24);
+    let sig_guardra: u64 = 0x6172_6472_6175_672F;
+    drop_mask |= (is_get & ((uri_from_get == sig_guardra) as u32))
+               | (is_post & ((uri_from_post == sig_guardra) as u32));
+
+    // 4. HTTP/1.1 + FastCGI Smuggling (CVE-2026-129289): протечка FCGI_Header в хвосте кадра
+    let fcgi_ver = (tail & 0xFF) as u8;
+    let fcgi_type = ((tail >> 8) & 0xFF) as u8;
+    let fcgi_smuggle = ((fcgi_ver == 1) & (fcgi_type >= 1) & (fcgi_type <= 11)) as u32;
+    drop_mask |= (is_get | is_post) & fcgi_smuggle;
+
+    drop_mask
+}

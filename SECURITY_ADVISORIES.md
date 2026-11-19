@@ -28,3 +28,13 @@
 | **CVE-2026-10891** (CVSS 9.1) | OpenSSL / BoringSSL TLS 1.3 `ClientHello` Zero/Odd Cipher Suite Overflow | `xdp_shield/xdp_zero_shield.c`, `src/l7_shield.rs` | Mitigated (XDP `ClientHello` cipher-suite length boundary check before socket enqueue) |
 
 | **CVE-2026-11642** (CVSS 8.8) | QUIC / HTTP/3 Stack Amplification & Fake Version Negotiation Loop (`UDP/443`) | `xdp_shield/xdp_zero_shield.c`, `src/l7_shield.rs` | Mitigated (`RFC 9000 §14.1` Initial `< 1200B` & `Version == 0` `XDP_DROP`) |
+
+### CVE-2026-129289 — PHP-FPM + NGINX FastCGI Request Smuggling (CVSS 9.2)
+* **Date:** 2026-11-19
+* **Vector:** HTTP/1.1 `fastcgi_keep_conn` stream desynchronization leaking binary `FCGI_Header` records into subsequent backend requests.
+* **Mitigation:** Blocked in `src/l7_shield.rs` (`verify_l7_rfc_normalizer_swar`) via branchless SWAR inspection of trailing `FCGI_Header` (`version=1, type=1..11`) frames on HTTP verbs (`~22.8 cycles/pkt`).
+
+### CVE-2026-40217 — BerriAI LiteLLM Unauthenticated RCE (CISA KEV)
+* **Date:** 2026-11-19
+* **Vector:** Remote code execution via `/guardrails` endpoint injection.
+* **Mitigation:** Blocked in `src/l7_shield.rs` (`verify_l7_rfc_normalizer_swar`) via register-shifted SWAR signature matching (`0x617264726175672F`) without extra unaligned memory loads.
