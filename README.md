@@ -1,79 +1,72 @@
-# Zero-Timing Core (`v3.0` — Elastic Self-Placing Multi-Core / `zero_hal v1.0.0`)
+# Zero-Timing Core (`v3.0` — Elastic Multi-Core Data-Plane / `zero_hal v1.0.0`)
 
-**Deterministic `#![no_std]` Rust & `x86_64` Assembly data-plane core, reusable hardware abstraction layer (`zero_hal`), Ring -1 micro-hypervisor, and MOK-signed Ring-0 Linux kernel DPI engine (`484.35 Mpps`).**
+[![CI](https://github.com)](https://github.com)
+![Language](https://shields.io)
+![ASM](https://shields.io)
+![License](https://shields.io)
 
-## Reusable Hardware Abstraction Layer (`zero_hal/`)
-* **`zero_hal::tsc`** — Serializing `lfence+rdtsc` / `rdtscp+lfence` timers and constant-time execution gates (`constant_time_gate`, `constant_time_jittered_gate`).
-* **`zero_hal::numa`** — Direct `sys_mmap` (`MAP_HUGETLB | MAP_HUGE_2MB`) + `sys_mbind` (`MPOL_BIND | MPOL_MF_MOVE`) and 64-byte cache-line prefaulting.
-* **`zero_hal::ddr_arena`** — Diskless `memfd_create` + `F_ADD_SEALS` + `mlock` + strict `W^X` (`PROT_READ | PROT_EXEC`) arenas, non-temporal `vmovntdq` + `clflush` memory wiping, and `clflushopt` cache-evicting reads.
-* **`zero_hal::ymm_vault`** — Register-pinned 256-bit epoch key storage in `YMM15` with zero DDR footprint.
-* **`zero_hal::io_uring_ring`** — 256-byte zero-copy telemetry slots (`ZEROMANI` magic) and direct `sys_io_uring_enter`.
+**Zero-Timing Core** is a deterministic, zero-allocation (`#![no_std]`, `#![no_main]`, zero `libc`) network data-plane and perimeter defense engine written in pure Rust and raw `x86_64` Assembly.
 
-## Elastic Self-Placing Multi-Core Engine (`zero_elastic_core` — `1 .. 1,000,000+` Cores)
-* **Unbounded Topology Discovery & Self-Placement (`src/topology_placer.rs`):** Dynamically probes live CPU affinity masks (`SYS_sched_getaffinity` without static core caps), L1d cache size (`32 KB`), `128-bit LOCK` (`CMPXCHG16B`), and `AVX2`, automatically pinning the hot `YMM15` key enclave to the cleanest core (`CPU #N-1`) while distributing parallel `20-capsule` (`4,491 B`) + `50 B` millicode lanes across all `N-1` worker cores.
-* **Last-Barrier Pulse Trap (`src/pulse_barrier.rs`):** Guards the entrance to the hot `YMM15` enclave with a 3-page `[PROT_NONE][mlock][PROT_NONE]` perimeter, `UD2` minefield, `SSE4.2 HW_CRC32C` (`0xFDDB063A`) `W^X` monolith verification, and 3-phase `TTL-Mirage` (`65 -> 65..118 -> 0x00`), executing at **`182 cycles/pulse`** (`600,000` verified impulses).
-* **Run Elastic Multi-Core Engine:** `cargo build --release --bin zero_elastic_core && ./target/release/zero_elastic_core`
+🇷🇺 **[Русская версия документации (README.ru.md)](README.ru.md)** | 🛡️ **[Security Advisories & Mitigations](SECURITY_ADVISORIES.md)**
 
-## Pure `#![no_std]` Rust + `x86_64` ASM Standalone Engine (`zero_pure_asm_engine`)
-* **Zero-C Monolithic Binary (`src/bin/zero_pure_asm_engine.rs`):** `6,746 B` (`.text`, `~6.58 KB`) compiled with LTO in `0.13s`, executing at **`26 cycles/pkt`** (`~127 Mpps`/core on 1,000,000 frames via `RDTSCP`).
-* **Self-Learning `JA4-SentinelBot` (`SSE4.2 CRC32C` + L1d Reputation Table):** Hardware-fingerprints `TLS 1.3`/`QUIC` `ClientHello` headers in a 64-slot L1d table with `RDTSC` anti-eviction protection, autonomously promoting clean browser flows (`TRUST=1`) while banning scanner fingerprints across IP rotations.
-* **Pulse-Triggered 3-Phase `TTL-Mirage` (`65 -> 65..118 -> 0x00`):** Zero-overhead (`0x00`) passthrough on normal traffic; activates on port-scan pulses to cycle `TTL=65` (baseline) -> `TTL=65..118` (`RDTSC` jitter) -> `0x00` Fast-Path L7 exit without breaking legitimate sessions.
-* **Run Standalone Verification:** `cargo build --release --bin zero_pure_asm_engine && ./target/release/zero_pure_asm_engine`
-
-## Visual Architecture Diagrams (`architecture_visuals/`)
-* [**1. Core Pipeline (`01_core_pipeline.md`)**](architecture_visuals/01_core_pipeline.md) — Ephemeral UEFI Stage 0, Ring -1 EPT/NPT hypervisor, `YMM15` vault, and sealed capsule.
-* [**2. Host & DDR Shield (`02_host_and_ddr_shield.md`)**](architecture_visuals/02_host_and_ddr_shield.md) — `zero-host-guard` (`inotify + SIGSTOP`), internal MTD -> `TC BPF` egress (`TTL=65`), and `memfd_create + mlock + W^X` arena.
-* [**3. 11-Module Vertical Pipeline (`03_modules_vertical.md`)**](architecture_visuals/03_modules_vertical.md) — Full vertical flow across L2/L4/L7 self-learning & pure `.S` `x86_64` ASM guards.
-
-## Build, Benchmarks & License
-* **One-Command Release Build (LTO):** `cargo build --release` (compiles `zero_hal v1.0.0` + `zero_project` in ~0.5s).
-* **Full Test Suite:** `make test && make clean` (benchmark scripts in [`benchmarks/README.md`](benchmarks/README.md)).
-* **License:** GPL-3.0 (`LICENSE`).
+> **Note for System Administrators:** The built-in watchdog (`zero-host-guard` & `OnlineSentinelBot`) automatically treats unauthorized background local LLM daemons (such as Ollama) scanning local ports/disks as rogue processes and isolates them (`SIGSTOP` / `DROP`).
 
 ---
 
-### Core Telemetry & L1/L3 Cache Footprint
-- **Executable Footprint (`.text`):** `17.7 KB` (`11,234 B` core + `6,877 B` sealed DDR capsules) — fits entirely inside **32 KB L1 Instruction Cache** with `14.3 KB` (`44.7%`) free headroom.
-- **Hardware PMU (`RDPMC` on 10,000,000 frames):** `484.35 Mpps` (`6.80 cycles/frame`), `109` cache misses (**99.999% cache hit rate**), `737` branch mispredictions.
-- **Protocol & Evasion Coverage (`PROT_NONE` Guard-Page Verified):** HTTP/1.1, 128-byte HTTP `TE.CL`/`CL.TE` Smuggling with `CRLFCRLF` boundary stop, HTTP/2 Rapid Reset (`CVE-2023-44487`, `~8.4 cycles/frame`), TLS 1.3 Record Splitting, QUIC Initial (`RFC 9000`), DNS/NTP Amplification, Modbus TCP, and Contrastive SWAR/AVX2 Self-Learning (`0.00%` False Positives across 1,000,000 clean frames).
+## Architecture Pipeline (`v3.0`)
 
-## Ring-0 Linux Kernel Module (`DKMS v2.4`) & Zero-Syscall Telemetry (`zero_top`)
-
-The monolithic Ring-0 kernel engine (`kernel_ring0/zero_timing_ring0.c`) provides inline `NF_INET_PRE_ROUTING` packet inspection with branchless `x86_64` ASM L7 DPI, 128-byte sliding GPR HTTP smuggling detection, lock-free `SSE4.2 CRC32C` flow tracking, constant-time `RDTSC` + per-CPU `Xorshift64*` gating, and a `SipHash-1-3` anti-poisoning sentinel bot.
-
-### 1. DKMS Kernel Module Installation (`v2.4`)
-```bash
-sudo mkdir -p /usr/src/zero-timing-ring0-2.4
-sudo cp kernel_ring0/* /usr/src/zero-timing-ring0-2.4/
-sudo dkms add -m zero-timing-ring0 -v 2.4
-sudo dkms build -m zero-timing-ring0 -v 2.4
-sudo dkms install -m zero-timing-ring0 -v 2.4
-sudo modprobe zero_timing_ring0
-```
-
-### 2. Live Ring-0 Control (`/proc/zero_timing_ring0`) & `zero_top`
-```bash
-# Switch between Monitor (Fail-Safe) and Enforce (NF_DROP) modes:
-echo enforce | sudo tee /proc/zero_timing_ring0
-echo const256 | sudo tee /proc/zero_timing_ring0
-
-# Build and run the no_std/no_main live telemetry reader:
-cargo build --release --bin zero_top
-./target/release/zero_top
+```mermaid
+flowchart LR
+    NIC["NIC / AF_XDP UMEM<br/>(2MB HugePages)"] --> TOPO["topology_placer<br/>(1..1M+ Cores / NUMA)"]
+    TOPO --> WS["Lock-Free Work-Stealing<br/>(169 cycles/pulse)"]
+    WS --> L7["Branchless L7 ASM<br/>(TLS 1.3 / HTTP / QUIC)"]
+    L7 --> BOT["JA4-SentinelBot<br/>(SipHash-1-3 + TTL Decay)"]
+    BOT --> TRAP["pulse_barrier<br/>(W^X + UD2 + PROT_NONE)"]
+    TRAP --> YMM["Hot YMM15 Enclave<br/>(vmovntdq + CLFLUSH)"]
 ```
 
 ---
 
-## 🛡️ Security Advisories & Mitigation Log
+## Key Engineering Highlights
 
-Tracking of critical CVEs and branchless data-plane mitigations is maintained in [SECURITY_ADVISORIES.md](SECURITY_ADVISORIES.md).
+* **Elastic Self-Placing Multi-Core (`src/topology_placer.rs`, `src/bin/zero_elastic_core.rs`):** Unlimited CPU affinity topology scanner (`SYS_sched_getaffinity`), automatic detection of `L1d` / `128-bit LOCK` / `AVX2`, hot-core selection for `YMM15`, and lock-free `Work-Stealing` across NUMA nodes (**30,000,000 pulses @ 169 cycles/pulse**).
+* **Last-Barrier Pulse Trap & `W^X` Arena (`src/pulse_barrier.rs`, `src/bin/zero_pure_asm_engine.rs`):** Memory-sealed execution (`memfd_create` + `mlock` + `PROT_NONE` guard pages + `0x0F0B` `UD2` minefields), hardware `SSE4.2` `CRC32C` fail-close verification, 3-phase `TTL-Mirage` (`65 -> 65..118 -> 0x00`), and register-pinned key storage in `YMM15` wiped via non-temporal `vmovntdq` + `CLFLUSH`.
+* **Branchless `x86_64` ASM L7 Inspection (`src/l7_shield.rs`):** Constant-time `cmov` / SWAR / `AVX-512` (`vpcmpeqb` + `kmovq`) inspection for TLS 1.3 `ClientHello`, Record Splitting, Downgrade, HTTP Request Smuggling, QUIC Initial (`RFC 9000`), RMM/SOHO proxy window mismatches, and 9 industrial/enterprise protocols (`HTTP/2 Rapid Reset`, `Modbus TCP`, `DNS`, `NTP`, `SMBv3`, `SSH-2`, `BGP/VXLAN`, `LDAP/Kerberos`, `RoCEv2`).
+* **Silicon-Backed Flow & Timing Gates (`src/flow_table.rs`, `src/tsc.rs`):** `Intel AES-NI` (`aesenc`) + `SSE4.2` (`crc32q`) 5-tuple hashing against collision DoS and serialized `lfence + rdtsc` constant-time execution windows (`0.002` cycles side-channel delta).
+* **Cross-Architecture HAL (`zero_hal v1.0.0`):** Zero-dependency hardware abstraction layer compiled cleanly with 0 warnings across **`x86_64`**, **`s390x` (IBM LinuxONE / z15)**, **`aarch64` (ARM64 NEON)**, and **`riscv64gc`**.
+* **Pre-OS Ring `-1` Micro-Hypervisor (`uefi_stage0/`, `src/thin_hypervisor.rs`):** Bare-metal `BOOTX64.EFI` activating `Intel VT-x` (`VMXON`) / `AMD-V` (`SVM`) with 4-level `EPT Execute-Only` (`R=0, W=0, X=1`) page protection prior to OS kernel boot.
 
 ---
 
-## 🖥️ Rackmount R&D Stand Fundraiser (Dell PowerEdge R730 + 10GbE SFP+)
+## Verified Hardware Benchmarks (Baseline: Intel Core i5-4590 Haswell)
 
-This project is an independent open-source deterministic data-plane R&D initiative. All contributions go directly toward acquiring a dedicated rackmount testbed (**Dell PowerEdge R730**, `2x Intel Xeon E5-2690 v4`, `Intel X520-DA2 10GbE SFP+`) to publish hardware wire-to-wire `XDP_DRV`, `Intel DDIO`, and `Intel CAT` L3 cache pinning benchmarks.
+| Benchmark / Subsystem | Metric | Hardware Counter / Verification |
+| :--- | :--- | :--- |
+| **Elastic Work-Stealing (`30M` pulses)** | **169 cycles/pulse** | `9,849,984` stolen tasks, `NUMA=1`, `W^X+CRC32C=OK` |
+| **Pure ASM Engine (`zero_pure_asm_engine`)** | **26 cycles/pkt** | `.text` size: **6,746 bytes** (`0.13s` LTO build) |
+| **L7 128-bit ASM Inspector (`50M` frames)** | **12.95 cycles/pkt** | `IPC 2.82`, `0.095%` branch-misses (`perf stat`) |
+| **Sealed DDR Arena (`10M` frames)** | **484.35 Mpps** (`6.80` cycles) | `99.999%` L1/L2 cache hit rate (`RDPMC`) |
+| **2-Level Gate (`10M` frames)** | **2.71 cycles/pkt** | `0` DDR reads on Level-1 reject |
+| **Constant-Time Comparator (`3M` runs)** | **0.002 cycles** delta | Serialized `RDTSCP`, zero timing leak |
+| **Memory Boundary Fuzzing (`PROT_NONE`)** | **0 `SIGSEGV`** | `> 1.1 Billion` mutated frames across `mprotect(PROT_NONE)` |
+| **Pre-OS Ring `-1` (`QEMU + OVMF KVM`)** | **2–3 cycles/frame** | `VMXON + EPT Execute-Only (R=0,W=0,X=1)` verified |
 
-* **TON (The Open Network):** `UQBTjCDPiQIUl73F_1f-3ArppvjdfJ7mfONIyfDZl5d9z66Z`
+---
 
-> **SysAdmin Field Note (Local LLM / Ollama):** The autonomous watchdog (`zero-host-guard` & `OnlineSentinelBot`) treats background local inference daemons (such as **Ollama**) as unauthorized threats due to aggressive filesystem scanning and local port binding, automatically isolating/terminating them under strict zero-trust perimeter rules.
+## Quick Build & Verification
+
+```bash
+cargo build --release
+./target/release/core_self_test
+./target/release/zero_pure_asm_engine
+./target/release/zero_elastic_core
+```
+
+---
+
+## Rackmount Hardware Fund (Spring 2027 Wire-Rate Lab)
+
+Core desktop R&D is in **Feature Freeze** while preparing physical `10GbE SFP+` validation on dedicated rackmount hardware (**Dell PowerEdge R730**, `2x Intel Xeon E5-2690 v4`, `Intel X520-DA2`, `Intel CAT` L3 cache pinning & `DDIO`).
+
+* **TON Wallet:** `UQBTjCDPiQIUl73F_1f-3ArppvjdfJ7mfONIyfDZl5d9z66Z`
+* **Tonviewer:** [Open Wallet & QR](https://tonviewer.com)
