@@ -63,7 +63,8 @@ extern "C" fn worker_core_entry(slot: *mut ImpulseSlot) -> usize {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn elastic_core_main() -> usize {
+#[target_feature(enable = "avx2,sse4.2")]
+pub unsafe extern "C" fn elastic_core_main() -> usize {
     unsafe {
         let mut cpu_ids: *mut u32 = core::ptr::null_mut();
         let hw = discover_hardware_and_place(&mut cpu_ids);

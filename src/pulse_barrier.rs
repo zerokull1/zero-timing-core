@@ -43,6 +43,7 @@ impl SealedHotPerimeter {
     }
 
     #[inline(never)]
+    #[target_feature(enable = "avx2")]
     pub unsafe fn trip_fail_close(&self) {
         self.trap_tripped.store(1, Ordering::Release);
         unsafe {
@@ -60,6 +61,7 @@ impl SealedHotPerimeter {
     }
 }
 
+#[target_feature(enable = "sse4.2")]
 pub unsafe fn seal_and_verify_monolith_wx(mono: &[u8], vm: &[u8], mcode: &[u8]) -> *const u8 {
     if mono.len() < 352 || vm.len() < 314 || mcode.len() < 50 { return core::ptr::null(); }
     let hdr = mono.as_ptr() as *const u64;
