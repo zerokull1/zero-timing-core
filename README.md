@@ -87,3 +87,26 @@ Core desktop R&D is in **Feature Freeze** while preparing physical `10GbE SFP+` 
 
 * **TON Wallet:** `UQBTjCDPiQIUl73F_1f-3ArppvjdfJ7mfONIyfDZl5d9z66Z`
 * **Tonviewer:** [Open Wallet & QR](https://tonviewer.com)
+
+---
+
+## Deployment Note: Running Alongside Local LLMs (Ollama / llama.cpp)
+
+Because `zero-timing-core` uses aggressive `busy-polling` (`Work-Stealing`), `mlock` + `2MB HugePages`, and strict process/port watchdogs, running heavy local inference engines (such as **Ollama**) on the same host without resource isolation can cause CPU contention, `kswapd` page reclaim pressure, or watchdog `SIGSTOP` loops.
+
+**Do not weaken kernel guard rules.** Instead, isolate the LLM workload at the OS level via a `systemd` `cgroups v2` drop-in (`/etc/systemd/system/ollama.service.d/override.conf`):
+
+```ini
+[Service]
+# Pin inference to dedicated cores, leaving Core 0-1 for zero_guard & IRQ
+AllowedCPUs=2-7
+CPUWeight=50
+
+# Prevent model weights from starving mlock / HugePages arenas
+MemoryHigh=6G
+MemoryMax=8G
+OOMScoreAdjust=500
+
+# Bind API strictly to loopback to avoid triggering perimeter port-scan alerts
+Environment="OLLAMA_HOST=127.0.0.1:11434"
+```

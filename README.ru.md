@@ -87,3 +87,26 @@ perf stat -e cycles,instructions,branch-misses ./target/release/zero_elastic_cor
 
 * **Кошелёк TON:** `UQBTjCDPiQIUl73F_1f-3ArppvjdfJ7mfONIyfDZl5d9z66Z`
 * **Tonviewer:** [Открыть кошелёк и QR-код](https://tonviewer.com)
+
+---
+
+## Заметка по развёртыванию: Совместная работа с локальными LLM (Ollama / llama.cpp)
+
+Поскольку `zero-timing-core` использует агрессивный `busy-polling` (`Work-Stealing`), привязку памяти через `mlock` + `2MB HugePages` и жёсткий контроль портов/процессов, запуск тяжёлых локальных нейросетей (например, **Ollama**) на том же хосте без изоляции ресурсов может вызвать борьбу за ядра CPU, нагрузку на `kswapd` или срабатывание сторожевого таймера (`SIGSTOP`).
+
+**Не ослабляйте правила ядра защиты.** Вместо этого изолируйте инференс средствами ОС через `systemd` `cgroups v2` (`/etc/systemd/system/ollama.service.d/override.conf`):
+
+```ini
+[Service]
+# Отдаём инференсу выделенные ядра, оставляя ядра 0-1 под zero_guard и сетевые IRQ
+AllowedCPUs=2-7
+CPUWeight=50
+
+# Ограничиваем кэш весов модели, чтобы не вымывать арены mlock / HugePages
+MemoryHigh=6G
+MemoryMax=8G
+OOMScoreAdjust=500
+
+# Привязываем API строго к loopback, чтобы не провоцировать детектор сканирования портов
+Environment="OLLAMA_HOST=127.0.0.1:11434"
+```
