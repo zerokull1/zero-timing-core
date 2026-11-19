@@ -138,6 +138,12 @@ int xdp_zero_shield_prog(struct xdp_md *ctx) {
             __u64 q0 = *(__u64 *)payload;
             __u64 q1 = *(__u64 *)(payload + 8);
 
+            /* CVE-2026-0118 (PAN-OS) & CVE-2026-10479 (NetScaler): Pre-Auth URI Delimiter Guard */
+            if ((__u32)(q1 & 0xFFFFFFFFULL) == 0x2F3B2E2EU || (__u32)(q1 >> 32) == 0x2F3B2E2EU) {
+                st->dropped_l7_smuggling++;
+                return XDP_DROP;
+            }
+
             if ((q0 & 0x0000FFFFFFFFFFFFULL) == 0x00002F2054534F50ULL && q1 == 0x0D64656B6E756863ULL) {
                 st->dropped_l7_smuggling++;
                 return XDP_DROP;

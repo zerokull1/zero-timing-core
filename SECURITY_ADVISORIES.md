@@ -20,3 +20,6 @@
 | **CVE-2026-123007** (`NGINX2Root`, CVSS 9.2) | HTTP/2 Frame Memory Corruption / RCE (`1.9.5`–`1.31.8`) | `xdp_shield/xdp_zero_shield.c` | Mitigated (`RFC 9113` SWAR frame length `> 16384` & zero-length `PADDED` drop in XDP) |
 | **CVE-2026-119618** (CVSS 9.8) | Apache `mod_http2` Malformed Frame RCE | `xdp_shield/xdp_zero_shield.c` | Mitigated (Pre-stack `XDP_DROP` on oversized/malformed HTTP/2 frames) |
 | **CVE-2026-48710** (CISA KEV 18.11.2026) | Kludex Starlette HTTP Request/Response Smuggling | `src/l7_shield.rs`, `xdp_zero_shield.c` | Mitigated (Branchless `x86_64` ASM `CL.TE` / `TE.CL` smuggling scanner) |
+
+| **CVE-2026-0118** (CVSS 9.6) | Palo Alto PAN-OS GlobalProtect Pre-Auth Path/Delimiter Injection (`..;/`) | `xdp_shield/xdp_zero_shield.c` | Mitigated (32-bit SWAR URI delimiter `0x2F3B2E2E` drop in XDP before `sk_buff`) |
+| **CVE-2026-10479** (CVSS 9.3, CISA KEV) | Citrix NetScaler ADC / Gateway Pre-Auth Header Buffer Overflow | `xdp_shield/xdp_zero_shield.c`, `src/l7_shield.rs` | Mitigated (Pre-stack XDP URI/header guard + constant-time L7 boundary check) |
