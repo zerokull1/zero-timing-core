@@ -66,7 +66,14 @@ flowchart LR
 | Слой исполнения | Тактов / Кадр | Контекст и накладные расходы |
 | :--- | :--- | :--- |
 | **Pre-OS Ring `-1` (`QEMU + OVMF KVM`)** | **2–3 такта** | `VMXON + EPT Execute-Only (R=0,W=0,X=1)`, Zero-Exit кольцо |
+
+| **`Intel VT-x` (`/dev/kvm`, `116B` Universal SWAR)** | **44.40 такта** | **74.32 Mpps** в `VMX Non-Root` (`1` `VM-Exit` на `1 000 000` кадров) |
+| **`Zero-Copy PCIe` GPU (`NVIDIA GTX 1050` PTX)** | **47.85 мкс RTT** | **1 369.53 Mpps** (`640` ядер Pascal, `Pinned RAM`, ноль `cuMemcpy`) |
+| **512-бит сейф `YMM14+15` + `RDTSC Tripwire`** | **63.39 такта** | `KeyResidue = 0` (`NT_X86_XSTATE`) при живом `PTRACE_SINGLESTEP` |
+| **Безветвящийся `CMOV` Millicode VM (`Spectre v2`)** | **7.40 такта/инстр.** | В `2.53x` быстрее `jmp *table` (`18.69` такта), `0` записей в BTB |
+| **`C0 Hot PAUSE` анти-сон (`2 000` импульсов)** | **150 тактов (`p50`)** | `0.05 мкс` (в `6 863x` быстрее сна ОС `C3/C6`), `p99 = 207` тактов |
 | **Linux `AF_XDP UMEM` + `L7 ASM` (`veth`)** | **22–23 такта** | Zero-copy RX-кольцо после `XDP_DRV` редиректа (`2 000` кадров) |
+| **`io_uring SQPOLL` против сокетов ядра** | **247 838 тактов** | **`0` сисколлов `io_uring_enter`** (`100k` UDP — цена обхода `sk_buff`) |
 | **Linux Netfilter `Ring-0` (`CONST_WIN=256`)** | **527–638 тактов** | Включает обход `sk_buff` ядра и константную выдержку `RDTSC` |
 
 ---
@@ -81,9 +88,9 @@ perf stat -e cycles,instructions,branch-misses ./target/release/zero_elastic_cor
 
 ---
 
-## Целевой сбор на стоечный стенд (Весна 2027, 10GbE Wire-Rate Lab)
+## Целевой сбор на стоечный стенд (Ускоренный запуск `10GbE SFP+` & Datacenter ToR Lab)
 
-Разработка десктопного ядра переведена в режим **Feature Freeze** до развёртывания выделенного стоечного сервера (**Dell PowerEdge R730**, `2x Intel Xeon E5-2690 v4`, `Intel X520-DA2 10GbE SFP+`, аппаратная изоляция L3-кэша `Intel CAT` и `DDIO`).
+Разработка десктопного ядра переведена в режим **Feature Freeze**, а развёртывание на выделенном стоечном сервере (**Dell PowerEdge R730**, `2x Intel Xeon E5-2690 v4`, `Intel X520-DA2 10GbE SFP+`, аппаратная изоляция L3-кэша `Intel CAT` и `DDIO`) ускорено раньше весны 2027 года, включая **защиту дата-центра от supply-chain закладок и East-West трафика на уровне ToR-шлюза** (`Zero-Touch Intake VLAN` + `TPM 2.0 PCR 0..7` + `/32` `MAC+IP+TTL` изоляция).
 
 * **Кошелёк TON:** `UQBTjCDPiQIUl73F_1f-3ArppvjdfJ7mfONIyfDZl5d9z66Z`
 * **Tonviewer:** [Открыть кошелёк и QR-код](https://tonviewer.com)
