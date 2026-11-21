@@ -138,3 +138,8 @@ $ taskset -c 0 perf stat -e cycles,instructions,branch-misses ./poc_veth_l7
 
        0.272451461 seconds time elapsed           # ~146.8 Mpps on 1 core
 ```
+
+
+## Лицензия / License
+
+Проект распространяется под лицензией **GNU Affero General Public License v3.0 (AGPL-3.0)** — см. [`LICENSE`](LICENSE). Любое сетевое или облачное использование модифицированных версий требует публикации исходного кода.
