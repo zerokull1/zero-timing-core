@@ -1,3 +1,4 @@
+#include <time.h>
 // ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 // Copyright (c) 2026 zerokull1 (https://github.com)
 // Licensed under GPL-3.0. Unauthorized proprietary use is strictly prohibited.
@@ -90,11 +91,9 @@ int main() {
 
     void* ptr = NULL;
     vkMapMemory(dev, mem, 0, 4096, 0, &ptr);
-    memcpy(ptr, shm_ptr, 2048);
+    memset(ptr, 0, 4096);
     uint32_t* alert = (uint32_t*)((uint8_t*)ptr + 2048);
     float* entropy = (float*)((uint8_t*)ptr + 2052);
-    *alert = 0;
-    *entropy = 0.0f;
 
     FILE* f = fopen("gpu_offload/shield_iat.spv", "rb");
     if (!f) f = fopen("shield_iat.spv", "rb");
@@ -150,9 +149,21 @@ int main() {
     vkCmdDispatch(cb, 1, 1, 1);
     vkEndCommandBuffer(cb);
 
+    // 1. Холодный прогрев контекста GTX 1050 (компиляция SPIR-V -> sm_61 и выход из энергосбережения)
     VkSubmitInfo si = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1, .pCommandBuffers = &cb };
     vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE);
     vkQueueWaitIdle(queue);
+
+    // 2. Боевой горячий прогон на прогретом GPU
+    memcpy(ptr, shm_ptr, 2048);
+    *alert = 0;
+    *entropy = 0.0f;
+    struct timespec ts0, ts1;
+    clock_gettime(CLOCK_MONOTONIC, &ts0);
+    vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE);
+    vkQueueWaitIdle(queue);
+    clock_gettime(CLOCK_MONOTONIC, &ts1);
+    double hot_us = (double)(ts1.tv_sec - ts0.tv_sec) * 1e6 + (double)(ts1.tv_nsec - ts0.tv_nsec) / 1e3;
 
     // Записываем оба вердикта GPU обратно в общую DDR-страницу для Rust-ядра
     *(uint32_t*)((uint8_t*)shm_ptr + 2048) = *alert;
@@ -164,6 +175,7 @@ int main() {
     printf("  1. IAT Jitter Spike Alerts: %u (Expected: 4)\n", *alert);
     printf("  2. Shannon IAT Entropy (H): %.4f bits (Max 4.0000)\n", *entropy);
     printf("  3. Spectral Shield Verdict: %s\n", verdict);
+    printf("  4. Warmed GPU Hot-Dispatch RTT: %.2f us\n", hot_us);
 
     return 0;
 }
