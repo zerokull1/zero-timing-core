@@ -1,16 +1,33 @@
-# ZEROMANI (zerokull1) — Cryptographic Proof of Authorship & Priority Registry
-**Author:** `zerokull1` (`0x5A45524F4D414E49ULL`)  
-**Timestamp:** `2026-11-21 13:05:42 UTC`  
-**Registry Document License:** GNU Affero General Public License v3.0 (`AGPL-3.0`)  
-**Referenced Binary Modules (`raw_opcode_release/*.bin`):** Proprietary / Closed-Source (`All Rights Reserved` — strictly excluded from AGPL-3.0)
+# ZEROMANI (`zerokull1`) — Cryptographic Proof of Authorship & Priority Registry
+
+- **Author:** `zerokull1` (`0x5A45524F4D414E49ULL` / `0x5A45524F4B554C4CULL`)
+- **Timestamp:** `2026-11-21 13:05:42 UTC`
+- **Public Identity & Sponsorship Anchor (TON):** `UQBTjCDPiQIUl73F_1f-3ArppvjdfJ7mfONIyfDZl5d9z66Z` ([Tonviewer](https://tonviewer.com))
+- **Registry Document License:** GNU Affero General Public License v3.0 (AGPL-3.0)
+- **Proprietary Binary Modules (`raw_opcode_release`):** All Rights Reserved. Closed-source bare-metal machine code; no license is granted to decompile, distribute, or use outside authorized hardware envelopes.
+
+---
+
+## Purpose & Verification Notice
 
 This repository acts as a cryptographic timestamp notary. It contains **only SHA-256 digests** of the closed-source bare-metal modules (`raw_opcode_release`), proving prior art and exact authorship without disclosing proprietary machine code.
 
+### Independent Verification Anchors
+1. **GitHub Funding Anchor:** The TON address listed above matches `.github/FUNDING.yml` in `zerokull1/zero-timing-core`.
+2. **Cryptographic Signature:** Verify detached SSH signature (`PROOF_OF_AUTHORSHIP.md.sig`) against the author's registered GitHub signing key (`ssh-keygen -Y verify`).
+3. **Blockchain Timestamp:** Verify `PROOF_OF_AUTHORSHIP.md.ots` via [OpenTimestamps](https://opentimestamps.org) (`ots verify PROOF_OF_AUTHORSHIP.md.ots`).
+
+---
+
 ## 1. Full Closed-Contour Monolith Digest
 
-- **Archive (`raw_opcode_release`):** `c8879a0a5ebf1c8ee2cdcf1fad6a55f1937e64a85c6ab98ad3273a05dd7d2f2d`
+| Artifact | SHA-256 Digest |
+| :--- | :--- |
+| `raw_opcode_release` (Archive) | `c8879a0a5ebf1c8ee2cdcf1fad6a55f1937e64a85c6ab98ad3273a05dd7d2f2d` |
 
-## 2. Individual Bare-Metal Module Digests (`SHA-256`)
+---
+
+## 2. Individual Bare-Metal Module Digests (SHA-256)
 
 | Module | Size (Bytes) | SHA-256 Digest |
 | :--- | ---: | :--- |
