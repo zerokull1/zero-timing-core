@@ -40,3 +40,4 @@
 * **Mitigation:** Blocked in `src/l7_shield.rs` (`verify_l7_rfc_normalizer_swar`) via register-shifted SWAR signature matching (`0x617264726175672F`) without extra unaligned memory loads.
 
 | `TTL-Guard Slot Poisoning & Fragmentation Bypass` (`src/ttl_guard.rs`) | High | **Fixed** (Avalanche 64-bit flow hash + Anti-Eviction lock for `confidence >= 16` + lock-free CAS CIDR whitelist + full IPv4 fragment & TCP Null/FIN drop) |
+| `XDP VLAN / IPv6 & Bogon Spoofing Bypass` (`xdp_shield/xdp_zero_shield.c`) | Critical | **Fixed** (802.1Q/802.1AD VLAN decapsulation + IPv6 HopLimit/Frag-44 guard + Bogon/Martian source & `tot_len` validation at XDP driver hook) |

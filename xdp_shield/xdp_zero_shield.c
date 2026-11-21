@@ -3,6 +3,7 @@
 #include <linux/bpf.h>
 #include <linux/if_ether.h>
 #include <linux/ip.h>
+#include <linux/ipv6.h>
 #include <linux/tcp.h>
 #include <linux/udp.h>
 #include <linux/in.h>
@@ -56,20 +57,48 @@ int xdp_zero_shield_prog(struct xdp_md *ctx) {
         return XDP_PASS;
     }
 
-    if (eth->h_proto != bpf_htons(ETH_P_IP)) {
+    __be16 h_proto = eth->h_proto;
+    void *nh = (void *)(eth + 1);
+    #pragma unroll
+    for (int i = 0; i < 2; i++) {
+        if (h_proto == bpf_htons(ETH_P_8021Q) || h_proto == bpf_htons(ETH_P_8021AD)) {
+            if (nh + 4 > data_end) return XDP_PASS;
+            h_proto = *(__be16 *)(nh + 2);
+            nh += 4;
+        }
+    }
+
+    if (h_proto == bpf_htons(ETH_P_IPV6)) {
+        struct ipv6hdr *ip6 = nh;
+        if ((void *)(ip6 + 1) > data_end) {
+            __sync_fetch_and_add(&st->dropped_null_tcp, 1);
+            return XDP_DROP;
+        }
+        if (ip6->version != 6 || ip6->hop_limit == 0 || ip6->hop_limit == 65 || ip6->hop_limit == 129 || ip6->nexthdr == 44) {
+            __sync_fetch_and_add(&st->dropped_null_tcp, 1);
+            return XDP_DROP;
+        }
         st->passed++;
         return XDP_PASS;
     }
 
-    struct iphdr *ip = (void *)(eth + 1);
+    if (h_proto != bpf_htons(ETH_P_IP)) {
+        st->passed++;
+        return XDP_PASS;
+    }
+
+    struct iphdr *ip = nh;
     if ((void *)(ip + 1) > data_end) return XDP_PASS;
-    if ((ip->frag_off & __constant_htons(0x3FFF)) != 0) {
+    __u32 src_host = bpf_ntohl(ip->saddr);
+    if (ip->version != 4 || ip->ihl != 5 || bpf_ntohs(ip->tot_len) < 20 ||
+        ip->ttl == 0 || ip->ttl == 65 || ip->ttl == 129 ||
+        (ip->frag_off & __constant_htons(0x3FFF)) != 0 ||
+        src_host == 0U || src_host == 0xFFFFFFFFU || (src_host & 0xFF000000U) == 0x7F000000U) {
         __sync_fetch_and_add(&st->dropped_null_tcp, 1);
         return XDP_DROP;
     }
 
-    __u32 ip_hdr_len = ip->ihl * 4;
-    if (ip_hdr_len < sizeof(struct iphdr)) return XDP_DROP;
+    __u32 ip_hdr_len = sizeof(struct iphdr);
 
     if (ip->protocol == IPPROTO_UDP) {
         struct udphdr *udp = (void *)ip + ip_hdr_len;
