@@ -1,7 +1,8 @@
 # ZEROMANI (zerokull1) — Cryptographic Proof of Authorship & Priority Registry
 **Author:** `zerokull1` (`0x5A45524F4D414E49ULL`)  
 **Timestamp:** `2026-11-21 13:05:42 UTC`  
-**License:** GNU Affero General Public License v3.0 (`AGPL-3.0`)
+**Registry Document License:** GNU Affero General Public License v3.0 (`AGPL-3.0`)  
+**Referenced Binary Modules (`raw_opcode_release/*.bin`):** Proprietary / Closed-Source (`All Rights Reserved` — strictly excluded from AGPL-3.0)
 
 This repository acts as a cryptographic timestamp notary. It contains **only SHA-256 digests** of the closed-source bare-metal modules (`raw_opcode_release`), proving prior art and exact authorship without disclosing proprietary machine code.
 
