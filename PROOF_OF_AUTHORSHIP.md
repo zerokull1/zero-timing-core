@@ -14,7 +14,7 @@ This repository acts as a cryptographic timestamp notary. It contains **only SHA
 
 ### Independent Verification Anchors
 1. **GitHub Funding Anchor:** The TON address listed above matches `.github/FUNDING.yml` in `zerokull1/zero-timing-core`.
-2. **Cryptographic Signature:** Verify detached SSH signature (`PROOF_OF_AUTHORSHIP.md.sig`) against the author's registered GitHub signing key (`ssh-keygen -Y verify`).
+2. **Cryptographic Signature:** Verify detached GPG/SSH signature (`PROOF_OF_AUTHORSHIP.md.asc` / `.sig`) against the author's registered GitHub signing key.
 3. **Blockchain Timestamp:** Verify `PROOF_OF_AUTHORSHIP.md.ots` via [OpenTimestamps](https://opentimestamps.org) (`ots verify PROOF_OF_AUTHORSHIP.md.ots`).
 
 ---
