@@ -143,3 +143,8 @@ $ taskset -c 0 perf stat -e cycles,instructions,branch-misses ./poc_veth_l7
 ## Лицензия / License
 
 Проект распространяется под лицензией **GNU Affero General Public License v3.0 (AGPL-3.0)** — см. [`LICENSE`](LICENSE). Любое сетевое или облачное использование модифицированных версий требует публикации исходного кода.
+
+
+## Multi-Port XDP Mesh & Silicon Self-Defense
+- **All-Ports XDP Mesh (1..1024 NICs):** Shared eBPF/XDP program and unified `BPF_MAP_TYPE_RINGBUF` bound simultaneously across all physical interfaces with millisecond hotplug auto-discovery and ingress quarantine.
+- **Unified Hardware Supervisor (`Core #3`, `3.1 KB #![no_std]`):** Self-calibrating `CPUID 0x04` L1d cache eviction trap (`AVX2` counter-scrub), `MSR 0x19C` digital thermal cryo-zeroize (`YMM0–YMM15`), and `CPUID` hypervisor stealth audit.
