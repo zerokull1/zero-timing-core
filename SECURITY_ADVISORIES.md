@@ -38,3 +38,5 @@
 * **Date:** 2026-11-19
 * **Vector:** Remote code execution via `/guardrails` endpoint injection.
 * **Mitigation:** Blocked in `src/l7_shield.rs` (`verify_l7_rfc_normalizer_swar`) via register-shifted SWAR signature matching (`0x617264726175672F`) without extra unaligned memory loads.
+
+| `TTL-Guard Slot Poisoning & Fragmentation Bypass` (`src/ttl_guard.rs`) | High | **Fixed** (Avalanche 64-bit flow hash + Anti-Eviction lock for `confidence >= 16` + lock-free CAS CIDR whitelist + full IPv4 fragment & TCP Null/FIN drop) |
