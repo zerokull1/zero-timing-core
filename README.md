@@ -148,3 +148,9 @@ $ taskset -c 0 perf stat -e cycles,instructions,branch-misses ./poc_veth_l7
 ## Multi-Port XDP Mesh & Silicon Self-Defense
 - **All-Ports XDP Mesh (1..1024 NICs):** Shared eBPF/XDP program and unified `BPF_MAP_TYPE_RINGBUF` bound simultaneously across all physical interfaces with millisecond hotplug auto-discovery and ingress quarantine.
 - **Unified Hardware Supervisor (`Core #3`, `3.1 KB #![no_std]`):** Self-calibrating `CPUID 0x04` L1d cache eviction trap (`AVX2` counter-scrub), `MSR 0x19C` digital thermal cryo-zeroize (`YMM0–YMM15`), and `CPUID` hypervisor stealth audit.
+
+## Adaptive Multi-WAN ECMP & Early-Boot Perimeter Lock
+
+- **Adaptive Multi-WAN (`deploy/zeromani-multiwan.sh` + `deploy/zeromani-multiwan-watchdog.py`):** Automatically aggregates all active uplinks (USB tethering, Wi-Fi, Ethernet) via L4 ECMP (`fib_multipath_hash_policy=1`), binds active flows with `nftables` Sticky Connmark (`ct mark`) and Per-NIC SNAT (`snat ip to`), enforces outbound `TTL=65` + `MTU 1380` + `FQ`, and dynamically recalculates `nexthop` weights every 3 seconds based on live RTT and packet loss.
+- **Early-Boot `network-pre.target` Lock (`deploy/install-early-boot.sh`):** Binds `nftables.service`, `zeromani-18caps.service` (All-Ports XDP Mesh), and `zeromani-core3-guard.service` strictly `Before=network-pre.target NetworkManager.service`, eliminating the warm/cold reboot race window before NICs and DHCP come online.
+- **Mobile Gateway XDP Compatibility:** Permits inbound `TTL=65` / `HopLimit=65` frames at the XDP ingress layer for seamless operation behind mobile tethering gateways.
