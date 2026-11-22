@@ -94,7 +94,7 @@ perf stat -e cycles,instructions,branch-misses ./target/release/zero_elastic_cor
 Core desktop R&D is in **Feature Freeze** with physical `10GbE SFP+` validation accelerated ahead of Spring 2027 on dedicated rackmount hardware (**Dell PowerEdge R730**, `2x Intel Xeon E5-2690 v4`, `Intel X520-DA2`, `Intel CAT` L3 cache pinning & `DDIO`), including **Datacenter Top-of-Rack (ToR) Supply-Chain & East-West Micro-Segmentation** (`Zero-Touch Intake VLAN` + `TPM 2.0 PCR 0..7` + `/32` `MAC+IP+TTL` isolation).
 
 * **TON Wallet:** `UQBTjCDPiQIUl73F_1f-3ArppvjdfJ7mfONIyfDZl5d9z66Z`
-* **Tonviewer:** [Open Wallet & QR](https://tonviewer.com)
+* **Tonviewer:** [https://tonviewer.com/UQBTjCDPiQIUl73F_1f-3ArppvjdfJ7mfONIyfDZl5d9z66Z]
 
 ---
 
