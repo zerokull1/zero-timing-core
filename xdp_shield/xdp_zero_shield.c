@@ -74,7 +74,7 @@ int xdp_zero_shield_prog(struct xdp_md *ctx) {
             __sync_fetch_and_add(&st->dropped_null_tcp, 1);
             return XDP_DROP;
         }
-        if (ip6->version != 6 || ip6->hop_limit == 0 || ip6->hop_limit == 65 || ip6->hop_limit == 129 || ip6->nexthdr == 44) {
+        if (ip6->version != 6 || ip6->hop_limit == 0 || ip6->hop_limit == 129 || ip6->nexthdr == 44) {
             __sync_fetch_and_add(&st->dropped_null_tcp, 1);
             return XDP_DROP;
         }
@@ -91,7 +91,7 @@ int xdp_zero_shield_prog(struct xdp_md *ctx) {
     if ((void *)(ip + 1) > data_end) return XDP_PASS;
     __u32 src_host = bpf_ntohl(ip->saddr);
     if (ip->version != 4 || ip->ihl != 5 || bpf_ntohs(ip->tot_len) < 20 ||
-        ip->ttl == 0 || ip->ttl == 65 || ip->ttl == 129 ||
+        ip->ttl == 0 || ip->ttl == 129 ||
         (ip->frag_off & __constant_htons(0x3FFF)) != 0 ||
         src_host == 0U || src_host == 0xFFFFFFFFU || (src_host & 0xFF000000U) == 0x7F000000U) {
         __sync_fetch_and_add(&st->dropped_null_tcp, 1);

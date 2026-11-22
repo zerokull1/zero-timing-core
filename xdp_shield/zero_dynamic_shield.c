@@ -197,7 +197,7 @@ int zero_dynamic_filter(struct xdp_md *ctx) {
 
     // 5. Проверка TTL-сигнатур тетеринга (65 / 129)
     __u8 ttl = ip->ttl;
-    __u32 block_65  = cfg ? cfg->block_ttl_65  : 1;
+    __u32 block_65  = cfg ? cfg->block_ttl_65  : 0;
     __u32 block_129 = cfg ? cfg->block_ttl_129 : 1;
 
     if ((block_65 && ttl == 65) || (block_129 && ttl == 129)) {
