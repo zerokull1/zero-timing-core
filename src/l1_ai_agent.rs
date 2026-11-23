@@ -72,8 +72,8 @@ pub unsafe extern "C" fn l1_agent_step_avx2(
     // 2. Write-on-Learn: mutate DDR synaptic weights only when teacher_signal != 0 (avoids store-forwarding stall)
     if teacher_signal != 0 {
         let active_mask = _mm256_cmpgt_epi8(x, _mm256_set1_epi8(16));
-        let pos_mask    = _mm256_set1_epi8(-((teacher_signal > 0) as i8));
-        let neg_mask    = _mm256_set1_epi8(-((teacher_signal < 0) as i8));
+        let pos_mask    = _mm256_set1_epi8((teacher_signal > 0) as i8);
+        let neg_mask    = _mm256_set1_epi8((teacher_signal < 0) as i8);
         let delta_pos   = _mm256_and_si256(active_mask, pos_mask);
         let delta_neg   = _mm256_and_si256(active_mask, neg_mask);
 
