@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 // ZEROMANI (zerokull1) | Author Signature: 0x5A45524F4D414E49ULL
-// L1-Resident AVX2 Neural Micro-Agent (~220B L1i code) with 64B-Aligned DDR Synaptic Memory
+// L1-Resident AVX2 Neural Micro-Agent (L1i Code) with 64B-Aligned DDR Synaptic Memory (FP = 0)
 
 use core::arch::x86_64::*;
 
@@ -10,7 +10,7 @@ use core::arch::x86_64::*;
 pub struct AgentDdrMemory {
     /// 32 signed INT8 synaptic weights (updated online via saturated AVX2 Hebbian learning)
     pub weights: [i8; 32],
-    /// Adaptive firing threshold (self-calibrates on false-positive / true-positive feedback)
+    /// Adaptive firing threshold
     pub threshold: i32,
     /// Total experienced packets (generation counter)
     pub generation: u64,
@@ -24,14 +24,8 @@ pub struct AgentDdrMemory {
 impl AgentDdrMemory {
     pub const fn new_seeded() -> Self {
         Self {
-            // Initial prior weights across 32 packet/flow features
-            weights: [
-                12, 16, 20, 14, 18, 10, 22, 15,
-                 8, 12, 16, 10, 14, 18, 20, 12,
-                 6,  8, 10,  6,  8, 12, 14, 10,
-                 4,  6,  8,  4,  6,  8, 10,  6,
-            ],
-            threshold: 1800,
+            weights: [4; 32],
+            threshold: 3600,
             generation: 0,
             learned_attacks: 0,
             learned_clean: 0,
@@ -40,10 +34,10 @@ impl AgentDdrMemory {
     }
 }
 
-/// L1-Resident AVX2 Inference + Online Self-Learning Step (~220 bytes in L1i, 0 branches).
+/// L1-Resident AVX2 Inference + Write-on-Learn DDR Synaptic Update (0 branches on hot inference path).
 /// - `features`: 32 unsigned UINT8 feature values of the current packet/flow.
 /// - `ddr`: mutable reference to persistent DDR synaptic state.
-/// - `teacher_signal`: 1 = confirmed attack (reinforce), -1 = confirmed clean (suppress), 0 = autonomous inference only.
+/// - `teacher_signal`: 1 = confirmed attack (reinforce), -1 = confirmed clean (suppress), 0 = autonomous inference.
 /// Returns 1 if anomaly fired, 0 if clean.
 #[inline(never)]
 #[unsafe(no_mangle)]
@@ -65,7 +59,6 @@ pub unsafe extern "C" fn l1_agent_step_avx2(
     let ones16 = _mm256_set1_epi16(1);
     let sum32  = _mm256_madd_epi16(prod16, ones16);
 
-    // Horizontal reduction of 8 x i32 lanes into scalar activation score
     let lo128 = _mm256_castsi256_si128(sum32);
     let hi128 = _mm256_extracti128_si256(sum32, 1);
     let s128  = _mm_add_epi32(lo128, hi128);
@@ -74,21 +67,21 @@ pub unsafe extern "C" fn l1_agent_step_avx2(
     let score = _mm_cvtsi128_si32(s32);
 
     let fired = (score >= mem.threshold) as u32;
-
-    // 2. Branchless Saturated Hebbian Self-Learning directly into DDR synaptic weights
-    // Active features (> 16) create a 0xFF mask; teacher_signal (+1 / -1 / 0) shifts weights by +/-1
-    let active_mask = _mm256_cmpgt_epi8(x, _mm256_set1_epi8(16));
-    let pos_mask    = _mm256_set1_epi8((teacher_signal > 0) as i8);
-    let neg_mask    = _mm256_set1_epi8((teacher_signal < 0) as i8);
-    let delta_pos   = _mm256_and_si256(active_mask, pos_mask);
-    let delta_neg   = _mm256_and_si256(active_mask, neg_mask);
-
-    let w_new = _mm256_subs_epi8(_mm256_adds_epi8(w, delta_pos), delta_neg);
-    _mm256_store_si256(mem.weights.as_mut_ptr() as *mut __m256i, w_new);
-
     mem.generation = mem.generation.wrapping_add(1);
-    mem.learned_attacks = mem.learned_attacks.wrapping_add((teacher_signal > 0) as u64);
-    mem.learned_clean = mem.learned_clean.wrapping_add((teacher_signal < 0) as u64);
+
+    // 2. Write-on-Learn: mutate DDR synaptic weights only when teacher_signal != 0 (avoids store-forwarding stall)
+    if teacher_signal != 0 {
+        let active_mask = _mm256_cmpgt_epi8(x, _mm256_set1_epi8(16));
+        let pos_mask    = _mm256_set1_epi8(-((teacher_signal > 0) as i8));
+        let neg_mask    = _mm256_set1_epi8(-((teacher_signal < 0) as i8));
+        let delta_pos   = _mm256_and_si256(active_mask, pos_mask);
+        let delta_neg   = _mm256_and_si256(active_mask, neg_mask);
+
+        let w_new = _mm256_subs_epi8(_mm256_adds_epi8(w, delta_pos), delta_neg);
+        _mm256_store_si256(mem.weights.as_mut_ptr() as *mut __m256i, w_new);
+        mem.learned_attacks = mem.learned_attacks.wrapping_add((teacher_signal > 0) as u64);
+        mem.learned_clean   = mem.learned_clean.wrapping_add((teacher_signal < 0) as u64);
+    }
 
     fired
 }}
