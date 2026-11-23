@@ -163,3 +163,10 @@ $ taskset -c 0 perf stat -e cycles,instructions,branch-misses ./poc_veth_l7
 - **Hardware Ceiling Benchmarked (Intel Haswell Core i5-4590 + DDR3-1600 Dual-Channel):**
   - `L1d` access latency: **4.76 cycles (1.44 ns)** (`3.50 IPC`, `0.002%` branch misses).
   - Single-core `AVX2` non-temporal stream bandwidth: **21.00 GB/s** (`DDR3` 2MB HugePage latency: **69.56 ns**).
+
+## Scope & Non-Goals (Architectural Boundaries)
+
+This kernel is intentionally engineered as a **deterministic L2–L7 perimeter gate and protocol normalizer**, not a full-stream antivirus or deep file-carving proxy:
+
+- **In Scope (L1i / XDP Hot-Path, ~25–39 cycles/pkt):** Line-rate L3/L4 anomaly drop, branchless SWAR/SIMD normalization (`CL+TE` HTTP smuggling, mixed-case URI traversal `..;/`, HTTP/2 header bombs, stateless `UDP/443` QUIC fallback to TLS 1.3), and zero-allocation IP quarantine.
+- **Explicit Non-Goals (ICAP / Application / Endpoint Layers):** No full TCP stream reassembly, no file carving, and no ZIP/PDF/ELF unpacking or YARA payload scanning inside the privileged perimeter path.
