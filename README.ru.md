@@ -21,7 +21,7 @@
 flowchart LR
     NIC["NIC / AF_XDP UMEM<br/>(2MB HugePages)"] --> TOPO["topology_placer<br/>(1..1M+ ядер / NUMA)"]
     TOPO --> WS["Lock-Free Work-Stealing<br/>(169 тактов/импульс)"]
-    WS --> L7["Безветвящийся L7 ASM<br/>(TLS 1.3 / HTTP / QUIC)"]
+    WS --> L7["Безветвящийся L7 ASM<br/>(TLS 1.3 / HTTP / Zero-QUIC)"]
     L7 --> BOT["JA4-SentinelBot<br/>(SipHash-1-3 + TTL Decay)"]
     BOT --> TRAP["pulse_barrier<br/>(W^X + UD2 + PROT_NONE)"]
     TRAP --> YMM["Горячий анклав YMM15<br/>(vmovntdq + CLFLUSH)"]
@@ -34,7 +34,7 @@ flowchart LR
 * **Карта кремния и GPU Sideband (`gpu_offload/vk_iat_bridge.c`):** `2MB HugePages` (`0.0012%` промахов dTLB — снижение в 74 789 раз), изоляция `64B` кэш-линий от MESIF False Sharing (`17.90` против `112.62` такта), `RDTSC`-ловушка отладки с автовыжиганием `YMM14/15` и прогретый `Vulkan` расчёт энтропии Шеннона по IAT (`59.14 мкс` RTT).
 * **Эластичное многоядерное ядро (`src/topology_placer.rs`, `src/bin/zero_elastic_core.rs`):** Безлимитный сканер топологии ядер (`SYS_sched_getaffinity`), автодетект `L1d` / `128-bit LOCK` / `AVX2`, автоматический выбор лучшего ядра под `YMM15` и безблокировочный `Work-Stealing` между NUMA-узлами (**30 000 000 импульсов @ 169 тактов/импульс**).
 * **Последний барьер и арена `W^X` (`src/pulse_barrier.rs`, `src/bin/zero_pure_asm_engine.rs`):** Запечатывание исполняемого кода в памяти (`memfd_create` + `mlock` + охранные страницы `PROT_NONE` + минные поля `0x0F0B` `UD2`), аппаратная проверка `SSE4.2` `CRC32C` (Fail-Close), трёхфазный `TTL-Mirage` (`65 -> 65..118 -> 0x00`) и хранение ключей в регистре `YMM15` с выжиганием DDR через `vmovntdq` + `CLFLUSH`.
-* **Безветвящаяся L7-инспекция и SWAR-нормализатор RFC (`src/l7_shield.rs`):** Константный по времени `cmov` / SWAR / `AVX-512` инспектор и единый **287-байтный** нормализатор инвариантов `RFC 9000/9112/9113` (`~22.8 такта/пакет`, `3.37 IPC`, `0.001%` промахов ветвлений), блокирующий HTTP/FastCGI Smuggling (`CVE-2026-129289`), HTTP/2 атаки (`CVE-2026-123007`, `CVE-2026-49975`), LiteLLM RCE (`CVE-2026-40217`), аномалии QUIC Initial (`RFC 9000`), TLS 1.3 Downgrade и 9 промышленных протоколов.
+* **Безветвящаяся L7-инспекция и SWAR-нормализатор RFC (`src/l7_shield.rs`):** Константный по времени `cmov` / SWAR / `AVX-512` инспектор и единый **287-байтный** нормализатор инвариантов `RFC 9000/9112/9113` (`~22.8 такта/пакет`, `3.37 IPC`, `0.001%` промахов ветвлений), блокирующий HTTP/FastCGI Smuggling (`CVE-2026-129289`), HTTP/2 атаки (`CVE-2026-123007`, `CVE-2026-49975`), LiteLLM RCE (`CVE-2026-40217`), политику Zero-QUIC (`UDP/443` 1-тактовый `XDP_DROP` -> штатный откат клиентов на `TLS 1.3 / TCP 443` по `RFC 9114`), TLS 1.3 Downgrade и 9 промышленных протоколов.
 * **Кремниевая криптография и константные окна (`src/flow_table.rs`, `src/tsc.rs`):** Аппаратное хэширование 5-tuple на `Intel AES-NI` (`aesenc`) + `SSE4.2` (`crc32q`) против Hash-Collision DoS и сериализующие окна исполнения `lfence + rdtsc` (`0.002` такта разницы по времени).
 * **Мультиархитектурный HAL (`zero_hal v1.0.0`):** Слой аппаратной абстракции без внешних зависимостей с чистой сборкой (0 предупреждений) под **`x86_64`**, **`s390x` (IBM LinuxONE / z15)**, **`aarch64` (ARM64 NEON)** и **`riscv64gc`**.
 * **Pre-OS микро-гипервизор Ring `-1` (`uefi_stage0/`, `src/thin_hypervisor.rs`):** Автономный `BOOTX64.EFI`, активирующий `Intel VT-x` (`VMXON`) / `AMD-V` (`SVM`) с 4-уровневой защитой страниц `EPT Execute-Only` (`R=0, W=0, X=1`) до загрузки ядра ОС.
