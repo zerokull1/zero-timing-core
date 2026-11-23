@@ -141,47 +141,10 @@ pub fn benchmark_l7_swar() -> (u64, u8) {
 
 #[inline(always)]
 pub unsafe fn inspect_quic_l7_asm(payload_ptr: *const u8, len: usize) -> u64 { unsafe {
-    if len < 16 || payload_ptr.is_null() { return 0; }
-    let b = core::slice::from_raw_parts(payload_ptr, 16);
-    let first_byte = b[0];
-    if (first_byte & 0x80) == 0 { return 0; }
-
-    let version = u32::from_be_bytes([b[1], b[2], b[3], b[4]]);
-    let dcid_len = b[5] as u32;
-    let pkt_type = ((first_byte >> 4) & 0x03) as u32;
-    let pkt_len = len as u32;
-
-    #[cfg(target_arch = "x86_64")]
-    {
-        let mut verdict: u64 = 0;
-        asm!(
-            "cmp {ver:e}, 1", "sete {v1:l}",
-            "cmp {ver:e}, 0x6b3343cf", "sete {v2:l}",
-            "test {ver:e}, {ver:e}", "sete {vn:l}",
-            "or {v1:l}, {v2:l}", "or {v1:l}, {vn:l}",
-            "test {v1:l}, {v1:l}", "mov {tmp}, 4", "cmovz {verd}, {tmp}",
-            "cmp {dcid:e}, 20", "cmova {verd}, {tmp}",
-            "cmp {ptype:e}, {v2:e}", "sete {is_init:l}",
-            "cmp {plen:e}, 1200", "setb {is_short:l}",
-            "and {is_init:l}, {is_short:l}",
-            "test {is_init:l}, {is_init:l}", "cmovnz {verd}, {tmp}",
-            ver = in(reg) version, dcid = in(reg) dcid_len, ptype = in(reg) pkt_type, plen = in(reg) pkt_len,
-            v1 = out(reg) _, v2 = out(reg) _, vn = out(reg) _, is_init = out(reg) _, is_short = out(reg) _, tmp = out(reg) _,
-            verd = inout(reg) verdict,
-            options(pure, nomem, nostack)
-        );
-        verdict
-    }
-
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        let valid_ver = (version == 1) | (version == 0x6b3343cf) | (version == 0);
-        let is_v2 = (version == 0x6b3343cf) as u32;
-        let short_init = (pkt_type == is_v2) & (pkt_len < 1200);
-        if !valid_ver || dcid_len > 20 || short_init { 4 } else { 0 }
-    }
+    if len == 0 || payload_ptr.is_null() { return 4; }
+    let first_byte = *payload_ptr;
+    (((first_byte & 0x80) != 0) as u64) << 2
 }}
-
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 pub unsafe fn cpu_supports_avx512bw() -> bool { unsafe {
@@ -469,13 +432,9 @@ pub unsafe fn verify_l7_rfc_normalizer_swar(payload: *const u8, len: usize) -> u
     };
     let b0 = (w0 & 0xFF) as u8;
 
-    // 1. QUIC RFC 9000 (CVE-2026-95691 / CVE-2026-88822):
+    // 1. Zero-QUIC Policy (RFC 9114 TCP/443 fallback): drop any QUIC Long Header in 1 cycle
     let is_quic_long = ((b0 & 0x80) != 0) as u32;
-    let ver_be = u32::from_be((w0 >> 8) as u32);
-    let valid_ver = ((ver_be == 0x0000_0001) | (ver_be == 0x6b33_43cf)) as u32;
-    let pkt_type = (b0 & 0x30) >> 4;
-    let short_initial = ((pkt_type == 0) & (len < 1200)) as u32;
-    let mut drop_mask = is_quic_long & ((valid_ver ^ 1) | short_initial);
+    let mut drop_mask = is_quic_long;
 
     // 2. HTTP/2 RFC 9113 (NGINX2Root CVE-2026-123007 + Near-Empty Bomb CVE-2026-49975):
     let h2_hdr = u32::from_be(w0 as u32);
