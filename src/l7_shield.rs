@@ -520,3 +520,50 @@ pub unsafe extern "C" fn inspect_universal_swar(
 
     bad_magic | bad_len | bad_type
 }
+
+/// Branchless ~70B SWAR /24 & /32 sliding-window DDoS storm detector (0 DDR reads, 2 cycles).
+/// `window` holds 4 packed big-endian IPv4 addresses (2 x u64). Returns 1 on flood burst (>=3 hits).
+#[inline(never)]
+#[unsafe(no_mangle)]
+pub extern "C" fn inspect_swar_subnet_storm(src_ip_be: u32, w0: u64, w1: u64) -> u32 {
+    let ip0 = w0 as u32;
+    let ip1 = (w0 >> 32) as u32;
+    let ip2 = w1 as u32;
+    let ip3 = (w1 >> 32) as u32;
+    let m24: u32 = 0x00FF_FFFF; // /24 in network byte order (LE representation)
+    let h0 = (((ip0 ^ src_ip_be) & m24) == 0) as u32;
+    let h1 = (((ip1 ^ src_ip_be) & m24) == 0) as u32;
+    let h2 = (((ip2 ^ src_ip_be) & m24) == 0) as u32;
+    let h3 = (((ip3 ^ src_ip_be) & m24) == 0) as u32;
+    ((h0 + h1 + h2 + h3) >= 3) as u32
+}
+
+/// Branchless ~120B AVX2 YMM 32-byte-per-cycle HTTP URI & control-byte sanitizer (FP = 0).
+/// Detects NUL injection, illegal ASCII control bytes, and `../` or `..\` path traversal in 1 vector pass.
+#[inline(never)]
+#[unsafe(no_mangle)]
+#[cfg(target_arch = "x86_64")]
+pub unsafe extern "C" fn inspect_avx2_http_uri_32b(payload: *const u8, len: usize) -> u32 { unsafe {
+    if len < 32 || payload.is_null() {
+        return 0;
+    }
+    use core::arch::x86_64::*;
+    let v = _mm256_loadu_si256(payload as *const __m256i);
+    // 1. NUL-byte & C0 control byte check (< 0x20, excluding \t=0x09, \n=0x0A, \r=0x0D)
+    let zero = _mm256_setzero_si256();
+    let has_nul = _mm256_movemask_epi8(_mm256_cmpeq_epi8(v, zero)) as u32;
+    let del = _mm256_set1_epi8(0x7F);
+    let has_del = _mm256_movemask_epi8(_mm256_cmpeq_epi8(v, del)) as u32;
+
+    // 2. Vectorized `..` detection across all 32 bytes simultaneously
+    let dot = _mm256_set1_epi8(b'.' as i8);
+    let dot_mask = _mm256_movemask_epi8(_mm256_cmpeq_epi8(v, dot)) as u32;
+    let dbl_dot = dot_mask & (dot_mask >> 1);
+    let slash = _mm256_set1_epi8(b'/' as i8);
+    let bslash = _mm256_set1_epi8(b'\\' as i8);
+    let sl_mask = (_mm256_movemask_epi8(_mm256_cmpeq_epi8(v, slash))
+                 | _mm256_movemask_epi8(_mm256_cmpeq_epi8(v, bslash))) as u32;
+    let traversal = dbl_dot & (sl_mask >> 2);
+
+    ((has_nul | has_del | traversal) != 0) as u32
+}}

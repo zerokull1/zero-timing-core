@@ -179,7 +179,9 @@ pub extern "C" fn main_entry() -> ! {
     quic_probe[0] = 0xC0;
     quic_probe[5] = 25;
     let quic_v = unsafe { l7_shield::inspect_quic_l7_asm(quic_probe.as_ptr(), 16) };
-    let _ = (vmx, svm, quic_v);
+    let storm_v = l7_shield::inspect_swar_subnet_storm(0x0101A8C0, 0x0201A8C0_0301A8C0, 0x0401A8C0_09090909);
+    let uri_v = unsafe { l7_shield::inspect_avx2_http_uri_32b(b"GET /index.html HTTP/1.1\r\nHost: a".as_ptr(), 32) };
+    let _ = (vmx, svm, quic_v, storm_v, uri_v);
     let mut m_key = mutagenic_seal::MutagenicKey512::new([0x5A45_524F_5249_4E47; 8], 0xDEAD_BEEF_CAFE_BABE);
     let mut sealed_ddr = [0u64; 8];
     let mut trap_sink = 0u64;
