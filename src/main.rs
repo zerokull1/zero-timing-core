@@ -16,6 +16,7 @@ mod core_engine;
 mod entropy_cpu;
 mod smp_stress;
 mod l7_shield;
+mod l1_ai_agent;
 mod af_xdp_engine;
 #[allow(unused_imports)]
 mod nic_bar0_pmd;
@@ -181,7 +182,10 @@ pub extern "C" fn main_entry() -> ! {
     let quic_v = unsafe { l7_shield::inspect_quic_l7_asm(quic_probe.as_ptr(), 16) };
     let storm_v = l7_shield::inspect_swar_subnet_storm(0x0101A8C0, 0x0201A8C0_0301A8C0, 0x0401A8C0_09090909);
     let uri_v = unsafe { l7_shield::inspect_avx2_http_uri_32b(b"GET /index.html HTTP/1.1\r\nHost: a".as_ptr(), 32) };
-    let _ = (vmx, svm, quic_v, storm_v, uri_v);
+    let mut ai_ddr = l1_ai_agent::AgentDdrMemory::new_seeded();
+    let ai_feat = [4u8; 32];
+    let ai_v = unsafe { l1_ai_agent::l1_agent_step_avx2(ai_feat.as_ptr(), &mut ai_ddr, 0) };
+    let _ = (vmx, svm, quic_v, storm_v, uri_v, ai_v);
     let mut m_key = mutagenic_seal::MutagenicKey512::new([0x5A45_524F_5249_4E47; 8], 0xDEAD_BEEF_CAFE_BABE);
     let mut sealed_ddr = [0u64; 8];
     let mut trap_sink = 0u64;
