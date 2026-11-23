@@ -25,7 +25,7 @@ impl AgentDdrMemory {
     pub const fn new_seeded() -> Self {
         Self {
             weights: [4; 32],
-            threshold: 3600,
+            threshold: 2400,
             generation: 0,
             learned_attacks: 0,
             learned_clean: 0,
