@@ -180,3 +180,38 @@ pub unsafe fn seal_and_verify_monolith_wx(mono: &[u8], vm: &[u8], mcode: &[u8]) 
     }
     code_page as *const u8
 }
+
+
+/// Emits a 43-byte x86_64 epoch-polymorphic Port 0 (AESENC) / Port 1 (CRC32Q) routine into a W^X slot.
+pub unsafe fn emit_polymorphic_epoch_x86(dst: *mut u8, epoch_id: u32) -> (usize, u32) {
+    let mut p = 0usize;
+    let variant = epoch_id & 3u32;
+    unsafe {
+        if (variant & 1u32) == 0 {
+            dst.add(p).write_volatile(0x4D); dst.add(p + 1).write_volatile(0x31); dst.add(p + 2).write_volatile(0xC0);
+        } else {
+            dst.add(p).write_volatile(0x4D); dst.add(p + 1).write_volatile(0x29); dst.add(p + 2).write_volatile(0xC0);
+        }
+        p += 3;
+        let head = [0x66u8, 0x48, 0x0F, 0x6E, 0xC7, 0x66, 0x0F, 0x6F, 0x0A];
+        let mut i = 0;
+        while i < head.len() { dst.add(p).write_volatile(head[i]); p += 1; i += 1; }
+        let body_a = [0xF2u8, 0x4C, 0x0F, 0x38, 0xF1, 0xC7, 0x66, 0x0F, 0x38, 0xDC, 0xC1,
+                      0xF2,   0x4C, 0x0F, 0x38, 0xF1, 0xC6, 0x66, 0x0F, 0x38, 0xDC, 0xC1];
+        let body_b = [0x66u8, 0x0F, 0x38, 0xDC, 0xC1, 0xF2, 0x4C, 0x0F, 0x38, 0xF1, 0xC7,
+                      0x66,   0x0F, 0x38, 0xDC, 0xC1, 0xF2, 0x4C, 0x0F, 0x38, 0xF1, 0xC6];
+        let body = if variant < 2u32 { &body_a } else { &body_b };
+        i = 0;
+        while i < body.len() { dst.add(p).write_volatile(body[i]); p += 1; i += 1; }
+        let tail = [0x66u8, 0x48, 0x0F, 0x7E, 0xC0, 0x4C, 0x31, 0xC0, 0xC3];
+        i = 0;
+        while i < tail.len() { dst.add(p).write_volatile(tail[i]); p += 1; i += 1; }
+    }
+    let mut crc: u32 = 0x5A45524F;
+    let mut j = 0usize;
+    while j < p {
+        crc = unsafe { crc32c_step(crc, dst.add(j).read_volatile()) };
+        j += 1;
+    }
+    (p, crc)
+}
