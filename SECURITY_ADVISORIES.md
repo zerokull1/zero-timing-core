@@ -41,3 +41,5 @@
 
 | `TTL-Guard Slot Poisoning & Fragmentation Bypass` (`src/ttl_guard.rs`) | High | **Fixed** (Avalanche 64-bit flow hash + Anti-Eviction lock for `confidence >= 16` + lock-free CAS CIDR whitelist + full IPv4 fragment & TCP Null/FIN drop) |
 | `XDP VLAN / IPv6 & Bogon Spoofing Bypass` (`xdp_shield/xdp_zero_shield.c`) | Critical | **Fixed** (802.1Q/802.1AD VLAN decapsulation + IPv6 HopLimit/Frag-44 guard + Bogon/Martian source & `tot_len` validation at XDP driver hook) |
+
+- **2026-11-24 — Linux Kernel SCTP / Exotic L4 Transport Hardening (IPPROTO 132/33/47/21):** Added 1-cycle XDP_DROP for SCTP, DCCP, GRE, and RDS across IPv4/IPv6 ingress (`xdp_zero_shield.c`) and host `raw prerouting` + modprobe blacklist.

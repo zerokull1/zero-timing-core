@@ -74,7 +74,7 @@ int xdp_zero_shield_prog(struct xdp_md *ctx) {
             __sync_fetch_and_add(&st->dropped_null_tcp, 1);
             return XDP_DROP;
         }
-        if (ip6->version != 6 || ip6->hop_limit == 0 || ip6->hop_limit == 129 || ip6->nexthdr == 44) {
+        if (ip6->version != 6 || ip6->hop_limit == 0 || ip6->hop_limit == 129 || ip6->nexthdr == 44 || ip6->nexthdr == 132 || ip6->nexthdr == 33 || ip6->nexthdr == 47 || ip6->nexthdr == 21) {
             __sync_fetch_and_add(&st->dropped_null_tcp, 1);
             return XDP_DROP;
         }
@@ -154,6 +154,10 @@ int xdp_zero_shield_prog(struct xdp_md *ctx) {
         return XDP_PASS;
     }
 
+    if (ip->protocol == 132 || ip->protocol == 33 || ip->protocol == 47 || ip->protocol == 21) {
+        __sync_fetch_and_add(&st->dropped_null_tcp, 1);
+        return XDP_DROP;
+    }
     if (ip->protocol != IPPROTO_TCP) {
         st->passed++;
         return XDP_PASS;
