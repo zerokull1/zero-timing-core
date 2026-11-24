@@ -164,6 +164,8 @@ $ taskset -c 0 perf stat -e cycles,instructions,branch-misses ./poc_veth_l7
   - `L1d` access latency: **4.76 cycles (1.44 ns)** (`3.50 IPC`, `0.002%` branch misses).
   - Single-core `AVX2` non-temporal stream bandwidth: **21.00 GB/s** (`DDR3` 2MB HugePage latency: **69.56 ns**).
 
+- **Epoch-Polymorphic Port 0/1 JIT & Exotic L4 Drop (24 Nov 2026):** Added a 43-byte `x86_64` epoch-polymorphic JIT emitter (`src/pulse_barrier.rs`) balancing Haswell `Port 0` (`AESENC`) and `Port 1` (`CRC32Q`) across `W^X` `Slot A <-> Slot B` arenas with zero `DSB Machine Clear` stalls (**6.62 cycles/pkt**), alongside 1-cycle IPv4/IPv6 XDP ingress drop for `SCTP (132)`, `DCCP (33)`, `GRE (47)`, and `RDS (21)`.
+
 ## Scope & Non-Goals (Architectural Boundaries)
 
 This kernel is intentionally engineered as a **deterministic L2–L7 perimeter gate and protocol normalizer**, not a full-stream antivirus or deep file-carving proxy:
