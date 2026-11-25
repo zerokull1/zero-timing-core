@@ -79,7 +79,7 @@ pub unsafe extern "C" fn l1_agent_step_avx2(
         let delta_neg   = _mm256_and_si256(active_mask, neg_mask);
 
         let w_raw = _mm256_subs_epi8(_mm256_adds_epi8(w, delta_pos), delta_neg);
-        let w_new = _mm256_min_epi8(w_raw, _mm256_set1_epi8(3));
+        let w_new = _mm256_max_epi8(_mm256_min_epi8(w_raw, _mm256_set1_epi8(3)), _mm256_set1_epi8(1));
         _mm256_store_si256(mem.weights.as_mut_ptr() as *mut __m256i, w_new);
         mem.learned_attacks = mem.learned_attacks.wrapping_add((teacher_signal > 0) as u64);
         mem.learned_clean   = mem.learned_clean.wrapping_add((teacher_signal < 0) as u64);
