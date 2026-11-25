@@ -654,6 +654,7 @@ pub unsafe fn canonical_l7_normalizer(dport: u16, l7: *const u8, len: usize) -> 
             let f2 = l7.add(9 + (flen as usize));
             let f2_len = (u32::from_be_bytes([*f2, *f2.add(1), *f2.add(2), *f2.add(3)]) >> 8) & 0x00FF_FFFF;
             if *f2.add(3) == 0x03 && f2_len == 4 { return 2; }
+            if (*l7.add(4) & 0x04) == 0 && *f2.add(3) == 0x09 && (*f2.add(4) & 0x04) == 0 { return 2; }
         }
     }
     if dport == 53 && len >= 14 {
@@ -714,7 +715,7 @@ pub unsafe fn canonical_l7_normalizer(dport: u16, l7: *const u8, len: usize) -> 
                 let b = u32::from_le_bytes([
                     *l7.add(body_off), *l7.add(body_off + 1), *l7.add(body_off + 2), *l7.add(body_off + 3)
                 ]);
-                if b == 0x6D783F3C || b == 0x4F44213C || b == 0x41304F72 {
+                if b == 0x6D783F3C || b == 0x4F44213C || b == 0x41304F72 || b == 0x0500EDAC {
                     return 2;
                 }
             }
