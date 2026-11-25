@@ -188,3 +188,4 @@ sudo ip addr flush dev eth1 && sudo ip link set dev eth1 arp off promisc on up
 sudo sysctl -w net.ipv6.conf.eth1.disable_ipv6=1 && sudo ethtool -K eth1 gro off lro off
 ```
 - **RFC 793 & Nmap Fingerprint Black-Hole**: Enforces `rfc793_tcp_guard` against invalid flag combinations, `SYN` payload smuggling, `URG` pointer OOB, and stateless `ACK` scans.
+- **RFC 9000 & 9113 Branchless SWAR Hardening**: Blocks both QUIC Long (`0x80`) and 1-RTT Short (`0x40`) headers in 1 cycle, closes `>=64KB` 24-bit HTTP/2 frame length bypasses, and enforces exact 4-byte `WINDOW_UPDATE` framing.

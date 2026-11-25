@@ -163,3 +163,4 @@ sudo ip addr flush dev eth1 && sudo ip link set dev eth1 arp off promisc on up
 sudo sysctl -w net.ipv6.conf.eth1.disable_ipv6=1 && sudo ethtool -K eth1 gro off lro off
 ```
 - **Строгий шлюз RFC 793 и защита от сканеров Nmap**: Отсекает `NULL`, `Xmas`, `SYN+FIN`, `SYN+RST`, `FIN+RST`, `SYN` с полезной нагрузкой, выход `URG` за границы сегмента и бессессионные `ACK`-зонды.
+- **Безветвящийся SWAR-нормализатор RFC 9000 и 9113**: Отсекает как QUIC Long (`0x80`), так и 1-RTT Short (`0x40`) заголовки за 1 такт, закрывает обход HTTP/2 через 24-битную длину `>=64 КБ` и проверяет точную 4-байтную длину `WINDOW_UPDATE`.
