@@ -162,3 +162,4 @@ Environment="OLLAMA_HOST=127.0.0.1:11434"
 sudo ip addr flush dev eth1 && sudo ip link set dev eth1 arp off promisc on up
 sudo sysctl -w net.ipv6.conf.eth1.disable_ipv6=1 && sudo ethtool -K eth1 gro off lro off
 ```
+- **Строгий шлюз RFC 793 и защита от сканеров Nmap**: Отсекает `NULL`, `Xmas`, `SYN+FIN`, `SYN+RST`, `FIN+RST`, `SYN` с полезной нагрузкой, выход `URG` за границы сегмента и бессессионные `ACK`-зонды.
