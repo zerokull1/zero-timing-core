@@ -713,7 +713,7 @@ pub unsafe fn canonical_l7_normalizer(dport: u16, l7: *const u8, len: usize) -> 
                     if (w0 & 0x00FF_FFFF_FFFF_FFFF) == 0x0045_4441_5247_5055 && *l7.add(h + 7) == b':' { has_upg += 1; }
                     if (w0 & 0x0000_0000_FFFF_FFFF) == 0x0000_0000_5453_4F48 && *l7.add(h + 4) == b':' {
                         let mut v = h + 5;
-                        while v + 9 <= hdr_lim && (*l7.add(v) == b' ' || *l7.add(v) == b'	') { v += 1; }
+                        while v + 9 <= hdr_lim && (*l7.add(v) == b' ' || *l7.add(v) == 0x09) { v += 1; }
                         if v + 9 <= hdr_lim {
                             let hv = u64::from_le_bytes([*l7.add(v), *l7.add(v+1), *l7.add(v+2), *l7.add(v+3), *l7.add(v+4), *l7.add(v+5), *l7.add(v+6), *l7.add(v+7)]);
                             if (hv & 0xFFFF_FFFF) == 0x2E37_3231 || hv == 0x2E34_3532_2E39_3631 || ((hv & 0xDFDF_DFDF_DFDF_DFDF) == 0x534F_484C_4143_4F4C && (*l7.add(v + 8) & 0xDF) == b'T') { return 2; }
