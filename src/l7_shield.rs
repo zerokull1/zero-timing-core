@@ -337,6 +337,9 @@ pub const VERDICT_RMM_SOHO_BLOCK: u64 = 0x14;
 
 #[inline(always)]
 pub unsafe fn inspect_rmm_soho_window_asm(payload: *const u8, len: usize, tcp_window: u16) -> u64 { unsafe {
+    if payload.is_null() || len < 6 {
+        return if tcp_window < 64 { VERDICT_RMM_SOHO_BLOCK } else { 0 };
+    }
     if len == 0 || payload.is_null() {
         return 0;
     }

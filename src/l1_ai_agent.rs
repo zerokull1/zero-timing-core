@@ -83,5 +83,37 @@ pub unsafe extern "C" fn l1_agent_step_avx2(
         mem.learned_clean   = mem.learned_clean.wrapping_add((teacher_signal < 0) as u64);
     }
 
+    _mm256_zeroupper();
     fired
+}}
+
+#[inline(never)]
+#[unsafe(no_mangle)]
+#[cfg(not(target_arch = "x86_64"))]
+pub unsafe extern "C" fn l1_agent_step_avx2(
+    features: *const u8,
+    ddr: *mut AgentDdrMemory,
+    teacher_signal: i32,
+) -> u32 { unsafe {
+    if features.is_null() || ddr.is_null() {
+        return 0;
+    }
+    let mem = &mut *ddr;
+    let mut score: i32 = 0;
+    let mut i = 0usize;
+    while i < 32 {
+        let xi = *features.add(i);
+        let wi = mem.weights[i];
+        score = score.wrapping_add((xi as i32) * (wi as i32));
+        if teacher_signal != 0 && (xi as i8) > 16 {
+            mem.weights[i] = if teacher_signal > 0 { wi.saturating_add(1) } else { wi.saturating_sub(1) };
+        }
+        i += 1;
+    }
+    mem.generation = mem.generation.wrapping_add(1);
+    if teacher_signal != 0 {
+        mem.learned_attacks = mem.learned_attacks.wrapping_add((teacher_signal > 0) as u64);
+        mem.learned_clean   = mem.learned_clean.wrapping_add((teacher_signal < 0) as u64);
+    }
+    (score >= mem.threshold) as u32
 }}

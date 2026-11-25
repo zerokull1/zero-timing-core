@@ -18,37 +18,12 @@ pub struct SealedHotPerimeter {
 
 #[inline(always)]
 unsafe fn sys_mprotect_checked(addr: *mut u8, len: usize, prot: usize) -> bool {
-    let ret: isize;
-    unsafe {
-        asm!(
-            "syscall",
-            inlateout("rax") SYS_MPROTECT as isize => ret,
-            in("rdi") addr as usize,
-            in("rsi") len,
-            in("rdx") prot,
-            lateout("rcx") _,
-            lateout("r11") _,
-            options(nostack)
-        );
-    }
-    ret == 0
+    unsafe { zero_hal::arch::syscall3(SYS_MPROTECT as u64, addr as u64, len as u64, prot as u64) == 0 }
 }
 
 #[inline(always)]
 unsafe fn sys_mlock_checked(addr: *mut u8, len: usize) -> bool {
-    let ret: isize;
-    unsafe {
-        asm!(
-            "syscall",
-            inlateout("rax") SYS_MLOCK as isize => ret,
-            in("rdi") addr as usize,
-            in("rsi") len,
-            lateout("rcx") _,
-            lateout("r11") _,
-            options(nostack)
-        );
-    }
-    ret == 0
+    unsafe { zero_hal::arch::syscall2(SYS_MLOCK as u64, addr as u64, len as u64) == 0 }
 }
 
 impl SealedHotPerimeter {
@@ -92,7 +67,11 @@ impl SealedHotPerimeter {
     pub unsafe fn trip_fail_close(&self) {
         self.trap_tripped.store(1, Ordering::Release);
         unsafe {
-            zero_hal::ddr_arena::SealedDdrArena::nt_wipe_64b(self.hot_page);
+            let mut off = 0usize;
+            while off < 4096 {
+                zero_hal::ddr_arena::SealedDdrArena::nt_wipe_64b(self.hot_page.add(off));
+                off += 64;
+            }
             let _ = sys_mprotect_checked(self.hot_page, 4096, 0);
         }
     }
@@ -100,15 +79,7 @@ impl SealedHotPerimeter {
     pub unsafe fn disarm_and_wipe(&self) {
         unsafe {
             self.trip_fail_close();
-            asm!(
-                "syscall",
-                inlateout("rax") SYS_MUNLOCK as isize => _,
-                in("rdi") self.hot_page as usize,
-                in("rsi") 4096usize,
-                lateout("rcx") _,
-                lateout("r11") _,
-                options(nostack)
-            );
+            let _ = zero_hal::arch::syscall2(SYS_MUNLOCK as u64, self.hot_page as u64, 4096u64);
             sys_munmap_anon(self.arena_base, 12288);
         }
     }

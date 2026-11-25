@@ -70,22 +70,29 @@ impl MutagenicKey512 {
     #[inline(always)]
     pub unsafe fn verify_or_vaporize(&mut self, observed_sig: u64, trap_sink: *mut u64) -> u64 { unsafe {
         let anomaly = observed_sig ^ self.hw_anchor;
-        let ptr = self.state.as_mut_ptr() as u64;
+        let state_ptr = self.state.as_mut_ptr() as u64;
+        let mut target = trap_sink as u64;
         #[cfg(target_arch = "x86_64")]
         asm!(
             "test {a}, {a}",
-            "cmovnz {p}, {t}",
-            "movnti [{p}], {z}",
+            "cmovnz {dst}, {st}",
+            "movnti [{dst}], {z}",
             "sfence",
             a = in(reg) anomaly,
-            t = in(reg) trap_sink as u64,
+            st = in(reg) state_ptr,
+            dst = inout(reg) target,
             z = in(reg) 0u64,
-            p = in(reg) ptr,
             options(nostack)
         );
-        let mask = if anomaly == 0 { u64::MAX } else { 0 };
-        for word in self.state.iter_mut() {
-            *word &= mask;
+        if anomaly != 0 {
+            for i in 0..8usize {
+                #[cfg(target_arch = "x86_64")]
+                asm!("movnti [{p}], {z}", p = in(reg) self.state.as_mut_ptr().add(i), z = in(reg) 0u64, options(nostack));
+                #[cfg(not(target_arch = "x86_64"))]
+                core::ptr::write_volatile(self.state.as_mut_ptr().add(i), 0);
+            }
+            #[cfg(target_arch = "x86_64")]
+            asm!("sfence", options(nostack));
         }
         anomaly
     }}
