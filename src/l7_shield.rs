@@ -644,10 +644,21 @@ pub unsafe fn canonical_l3_l4_gate(ip: *const u8, len: usize) -> u64 { unsafe {
 #[inline(never)]
 pub unsafe fn canonical_l7_normalizer(dport: u16, l7: *const u8, len: usize) -> u32 { unsafe {
     if l7.is_null() || len == 0 { return 0; }
-    if (dport == 80 || dport == 8080) && len >= 13 && *l7.add(3) == 0x08 {
+    if (dport == 80 || dport == 8080) && len >= 13 {
         let flen = (u32::from_be_bytes([*l7, *l7.add(1), *l7.add(2), *l7.add(3)]) >> 8) & 0x00FF_FFFF;
-        let inc = u32::from_be_bytes([*l7.add(9), *l7.add(10), *l7.add(11), *l7.add(12)]) & 0x7FFF_FFFF;
-        if flen != 4 || inc == 0 || inc >= 0x4000_0000 { return 2; }
+        let ftype = *l7.add(3);
+        if ftype == 0x08 {
+            let inc = u32::from_be_bytes([*l7.add(9), *l7.add(10), *l7.add(11), *l7.add(12)]) & 0x7FFF_FFFF;
+            if flen != 4 || inc == 0 || inc >= 0x4000_0000 { return 2; }
+        } else if ftype == 0x01 && (flen as usize) + 18 <= len {
+            let f2 = l7.add(9 + (flen as usize));
+            let f2_len = (u32::from_be_bytes([*f2, *f2.add(1), *f2.add(2), *f2.add(3)]) >> 8) & 0x00FF_FFFF;
+            if *f2.add(3) == 0x03 && f2_len == 4 { return 2; }
+        }
+    }
+    if dport == 53 && len >= 14 {
+        let q_lbl = *l7.add(12);
+        if q_lbl >= 48 && q_lbl <= 63 { return 2; }
     }
     if len >= 12 {
         let mut uri_start = 0usize;
