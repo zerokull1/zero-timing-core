@@ -643,6 +643,7 @@ pub unsafe fn canonical_l3_l4_gate(ip: *const u8, len: usize) -> u64 { unsafe {
 /// Убивает на корню CVE-2026-123007 (NGINX2Root), CVE-2026-104286/133968/102226 (Path Traversal) и CVE-2026-129448 (XML/Java Deser).
 #[inline(never)]
 pub unsafe fn canonical_l7_normalizer(dport: u16, l7: *const u8, len: usize) -> u32 { unsafe {
+    if dport == 135 || (dport >= 137 && dport <= 139) || dport == 445 || dport == 3389 || dport == 5355 || dport == 5985 || dport == 5986 { return 2; }
     if l7.is_null() || len == 0 { return 0; }
     if (dport == 80 || dport == 8080) && len >= 13 {
         let flen = (u32::from_be_bytes([*l7, *l7.add(1), *l7.add(2), *l7.add(3)]) >> 8) & 0x00FF_FFFF;
