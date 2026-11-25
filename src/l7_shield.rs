@@ -435,11 +435,11 @@ pub unsafe fn verify_l7_rfc_normalizer_swar(payload: *const u8, len: usize) -> u
     };
     let b0 = (w0 & 0xFF) as u8;
 
-    // 1. Zero-QUIC Policy (RFC 9114 TCP/443 fallback): drop any QUIC Long Header in 1 cycle
-    let is_quic_long = ((b0 & 0x80) != 0) as u32;
-    let mut drop_mask = is_quic_long;
+    // 1. Zero-QUIC Policy (RFC 9000 Long + 1-RTT Short Header 0x40): drop any QUIC header in 1 cycle
+    let is_quic_any = (((b0 & 0x80) != 0) | ((b0 & 0xC0) == 0x40)) as u32;
+    let mut drop_mask = is_quic_any;
 
-    // 2. HTTP/2 RFC 9113 (NGINX2Root CVE-2026-123007 + Near-Empty Bomb CVE-2026-49975):
+    // 2. HTTP/2 RFC 9113 (NGINX2Root CVE-2026-123007 + Near-Empty Bomb CVE-2026-49975 + >=64KB Frame Bypass):
     let h2_hdr = u32::from_be(w0 as u32);
     let h2_len = h2_hdr >> 8;
     let h2_type = (h2_hdr & 0xFF) as u8;
@@ -447,8 +447,8 @@ pub unsafe fn verify_l7_rfc_normalizer_swar(payload: *const u8, len: usize) -> u
     let bad_h2_len = ((h2_len < 6) | (h2_len > 16384)) as u32;
     let is_h2_win = (h2_type == 0x08) as u32;
     let win_inc = u32::from_be((w1 >> 8) as u32) & 0x7FFF_FFFF;
-    let bad_win = ((win_inc == 0) | (win_inc > 0x3FFF_FFFF)) as u32;
-    let maybe_h2 = ((is_quic_long == 0) & (b0 == 0x00) & (h2_type <= 0x09)) as u32;
+    let bad_win = ((h2_len != 4) | (win_inc == 0) | (win_inc > 0x3FFF_FFFF)) as u32;
+    let maybe_h2 = ((is_quic_any == 0) & (b0 <= 0x0F) & (h2_type <= 0x09)) as u32;
     drop_mask |= maybe_h2 & ((is_h2_hdr & bad_h2_len) | (is_h2_win & bad_win));
 
     // 3. BerriAI LiteLLM RCE (CVE-2026-40217): "/guardra" из регистров w0/w1 без лишних чтений
