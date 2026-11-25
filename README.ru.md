@@ -155,3 +155,10 @@ Environment="OLLAMA_HOST=127.0.0.1:11434"
 ### Геометрия протоколов и Карантин стойки (East-West)
 - **Канонический L7-шлюз без аллокаций (`src/l7_shield.rs`)**: Отсекает HTTP/2 Rapid Reset, `CONTINUATION` Flood, DNS-туннелирование (`label_len >= 48`), `HTTP CONNECT`-туннели, WebSocket Smuggling, браузерный DNS Rebinding (`Host: 127.0.0.1` / `169.254.169.254` / `localhost`) и порты бокового перемещения (`135`, `137-139`, `445`, `3389`, `5355`, `5985-5986`).
 - **Сквозной контур защиты от Pre-OS до L7**: Объединяет отключение сетевого стека UEFI SNP до старта ядра, аппаратную изоляцию DMA (`VT-d` IOMMU), загрузку XDP строго `Before=network-pre.target`, карантин стойки East-West и беззнаковый AVX2 ИИ-агент в L1 (`493.64 млн кадров/сек`, `6.67 такта/кадр`).
+
+### Пассивный радар на зеркальном порту TAP / SPAN (без риска для трафика)
+Для аудита живой стойки дата-центра или магистрального канала без разрыва линии подайте копию трафика (SPAN / оптический TAP) на выделенный порт с отключёнными IP, ARP, IPv6 и склейкой кадров (`gro/lro off`), чтобы L1-движок анализировал сырые кадры на скорости линии (`493.64 млн кадров/сек`):
+```bash
+sudo ip addr flush dev eth1 && sudo ip link set dev eth1 arp off promisc on up
+sudo sysctl -w net.ipv6.conf.eth1.disable_ipv6=1 && sudo ethtool -K eth1 gro off lro off
+```

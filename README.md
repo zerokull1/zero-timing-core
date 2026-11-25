@@ -180,3 +180,10 @@ This kernel is intentionally engineered as a **deterministic L2–L7 perimeter g
 ### Protocol-Geometry & East-West Quarantine
 - **Zero-Allocation L7 Semantic Gate (`src/l7_shield.rs`)**: Blocks HTTP/2 Rapid Reset, `CONTINUATION` Flood, DNS tunneling (`label_len >= 48`), `HTTP CONNECT`, WebSocket smuggling, `Host:` DNS rebinding (`127.0.0.1` / `169.254.169.254` / `localhost`), and East-West lateral-movement ports (`135`, `137-139`, `445`, `3389`, `5355`, `5985-5986`).
 - **Full-Stack Defense Continuum**: Spans UEFI Pre-OS SNP isolation, `VT-d` IOMMU DMA protection, `Before=network-pre.target` XDP attachment, East-West rack quarantine, and L1-resident unsigned AVX2 inference (`493.64M fps`, `6.67 cycles/pkt`).
+
+### Out-of-Band TAP / SPAN Anomaly Radar
+To audit a live data-center rack or transit link without inline risk, mirror traffic to a dedicated NIC with IP/ARP/GRO disabled so L1-resident SIMD gates inspect raw wire frames at line rate (`493.64M fps`):
+```bash
+sudo ip addr flush dev eth1 && sudo ip link set dev eth1 arp off promisc on up
+sudo sysctl -w net.ipv6.conf.eth1.disable_ipv6=1 && sudo ethtool -K eth1 gro off lro off
+```
