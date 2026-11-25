@@ -735,3 +735,16 @@ pub unsafe fn canonical_l7_normalizer(dport: u16, l7: *const u8, len: usize) -> 
     }
     0
 }}
+
+#[inline(always)]
+pub unsafe fn tcp_boundary_split_guard(dport: u16, tcp_flags: u8, l7_len: usize, slot_flags: *mut u16) -> u32 {
+    if dport != 22 && l7_len >= 1 && l7_len < 12 && (tcp_flags & 0x01) == 0 && !slot_flags.is_null() {
+        let f = unsafe { *slot_flags };
+        if (f & 16) != 0 {
+            unsafe { *slot_flags = 0; }
+            return 2;
+        }
+        unsafe { *slot_flags = f | 16; }
+    }
+    0
+}
