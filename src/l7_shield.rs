@@ -570,3 +570,137 @@ pub unsafe extern "C" fn inspect_avx2_http_uri_32b(payload: *const u8, len: usiz
 
     ((has_nul | has_del | traversal) != 0) as u32
 }}
+
+/// Единый безветвящийся L3/L4 канонический шлюз (убивает CVE-2026-98432 IHL!=5, фрагментацию, Zero-QUIC, Window Squeezing).
+/// Возвращает 0 (PASS) или 1 (DROP).
+#[inline(always)]
+pub unsafe fn canonical_l3_l4_gate(ip: *const u8, len: usize) -> u64 { unsafe {
+    if ip.is_null() || len < 20 { return 1; }
+    #[cfg(target_arch = "x86_64")]
+    {
+        let mut verdict: u64 = 0;
+        asm!(
+            "mov {bad:e}, 1",
+            "movzx {t0:e}, byte ptr [{ip}]",
+            "cmp {t0:e}, 0x45",
+            "cmovne {verd:e}, {bad:e}",
+            "movzx {t0:e}, word ptr [{ip} + 6]",
+            "test {t0:e}, 0xFF3F",
+            "cmovnz {verd:e}, {bad:e}",
+            "movzx {t0:e}, byte ptr [{ip} + 9]",
+            "cmp {t0:e}, 17",
+            "jne 1f",
+            "cmp {len}, 28",
+            "cmovb {verd:e}, {bad:e}",
+            "jb 2f",
+            "movzx {t0:e}, word ptr [{ip} + 22]",
+            "rol {t0:x}, 8",
+            "cmp {t0:e}, 443",
+            "cmove {verd:e}, {bad:e}",
+            "cmp {t0:e}, 8443",
+            "cmove {verd:e}, {bad:e}",
+            "jmp 2f",
+            "1:",
+            "cmp {t0:e}, 6",
+            "jne 2f",
+            "cmp {len}, 40",
+            "cmovb {verd:e}, {bad:e}",
+            "jb 2f",
+            "movzx {t0:e}, word ptr [{ip} + 34]",
+            "rol {t0:x}, 8",
+            "cmp {t0:e}, 64",
+            "cmovb {verd:e}, {bad:e}",
+            "2:",
+            ip = in(reg) ip,
+            len = in(reg) len,
+            t0 = out(reg) _,
+            bad = out(reg) _,
+            verd = inout(reg) verdict,
+            options(pure, readonly, nostack)
+        );
+        verdict
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        if *ip != 0x45 { return 1; }
+        let frag = u16::from_be_bytes([*ip.add(6), *ip.add(7)]) & 0x3FFF;
+        if frag != 0 { return 1; }
+        let proto = *ip.add(9);
+        if proto == 17 {
+            if len < 28 { return 1; }
+            let dport = u16::from_be_bytes([*ip.add(22), *ip.add(23)]);
+            if dport == 443 || dport == 8443 { return 1; }
+        } else if proto == 6 {
+            if len < 40 { return 1; }
+            let win = u16::from_be_bytes([*ip.add(34), *ip.add(35)]);
+            if win < 64 { return 1; }
+        }
+        0
+    }
+}}
+
+/// Единый L7 канонический нормализатор (URI SWAR + HTTP/2 Window Overflow + Serialization/Smuggling Gate).
+/// Убивает на корню CVE-2026-123007 (NGINX2Root), CVE-2026-104286/133968/102226 (Path Traversal) и CVE-2026-129448 (XML/Java Deser).
+#[inline(never)]
+pub unsafe fn canonical_l7_normalizer(dport: u16, l7: *const u8, len: usize) -> u32 { unsafe {
+    if l7.is_null() || len == 0 { return 0; }
+    if (dport == 80 || dport == 8080) && len >= 13 && *l7.add(3) == 0x08 {
+        let flen = (u32::from_be_bytes([*l7, *l7.add(1), *l7.add(2), *l7.add(3)]) >> 8) & 0x00FF_FFFF;
+        let inc = u32::from_be_bytes([*l7.add(9), *l7.add(10), *l7.add(11), *l7.add(12)]) & 0x7FFF_FFFF;
+        if flen != 4 || inc == 0 || inc >= 0x4000_0000 { return 2; }
+    }
+    if len >= 12 {
+        let m0 = u32::from_le_bytes([*l7, *l7.add(1), *l7.add(2), *l7.add(3)]) & 0xDFDF_DFDF;
+        let is_http = ((m0 & 0x00FF_FFFF) == 0x0054_4547) || (m0 == 0x5453_4F50) || (m0 == 0x4441_4548) || ((m0 & 0x00FF_FFFF) == 0x0054_5550);
+        if is_http {
+            let uri_lim = if len > 256 { 256 } else { len };
+            let mut i = 4usize;
+            while i + 2 <= uri_lim {
+                let b0 = *l7.add(i);
+                if b0 == 0x0D || b0 == 0x0A { break; }
+                let b1 = *l7.add(i + 1);
+                if b0 < 0x20 || b0 == b'\\' || (b0 == b'.' && b1 == b'.') || (b0 == b'/' && b1 == b'/') {
+                    return 2;
+                }
+                if b0 == b'%' && i + 2 < uri_lim {
+                    let h1 = *l7.add(i + 1) | 0x20;
+                    let h2 = *l7.add(i + 2) | 0x20;
+                    if (h1 == b'2' && (h2 == b'e' || h2 == b'f')) || (h1 == b'5' && h2 == b'c') || (h1 == b'0' && h2 == b'0') {
+                        return 2;
+                    }
+                }
+                i += 1;
+            }
+            let hdr_lim = if len > 512 { 512 } else { len };
+            let mut has_cl = 0u32;
+            let mut has_te = 0u32;
+            let mut body_off = 0usize;
+            let mut h = i;
+            while h + 16 <= hdr_lim {
+                if *l7.add(h) == 0x0D && *l7.add(h + 1) == 0x0A && *l7.add(h + 2) == 0x0D && *l7.add(h + 3) == 0x0A {
+                    body_off = h + 4;
+                    break;
+                }
+                if h > 0 && *l7.add(h - 1) == 0x0A {
+                    let w0 = u64::from_le_bytes([
+                        *l7.add(h), *l7.add(h + 1), *l7.add(h + 2), *l7.add(h + 3),
+                        *l7.add(h + 4), *l7.add(h + 5), *l7.add(h + 6), *l7.add(h + 7)
+                    ]) & 0xDFDF_DFDF_DFDF_DFDF;
+                    if w0 == 0x0D54_4E45_544E_4F43 { has_cl += 1; }
+                    if w0 == 0x5245_4653_4E41_5254 { has_te += 1; }
+                }
+                h += 1;
+            }
+            if (has_cl != 0 && has_te != 0) || has_cl > 1 || has_te > 1 { return 2; }
+            if body_off > 0 && body_off + 6 <= len {
+                let b = u32::from_le_bytes([
+                    *l7.add(body_off), *l7.add(body_off + 1), *l7.add(body_off + 2), *l7.add(body_off + 3)
+                ]);
+                if b == 0x6D783F3C || b == 0x4F44213C || b == 0x41304F72 {
+                    return 2;
+                }
+            }
+        }
+    }
+    0
+}}
