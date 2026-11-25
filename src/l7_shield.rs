@@ -672,6 +672,7 @@ pub unsafe fn canonical_l7_normalizer(dport: u16, l7: *const u8, len: usize) -> 
             m += 1;
         }
         if uri_start != 0 {
+            if uri_start == 8 && (u64::from_le_bytes([*l7, *l7.add(1), *l7.add(2), *l7.add(3), *l7.add(4), *l7.add(5), *l7.add(6), *l7.add(7)]) & 0x00DF_DFDF_DFDF_DFDF) == 0x0054_4345_4E4E_4F43 { return 2; }
             let uri_lim = if len > 512 { 512 } else { len };
             let mut i = uri_start;
             while i + 2 <= uri_lim {
@@ -693,6 +694,7 @@ pub unsafe fn canonical_l7_normalizer(dport: u16, l7: *const u8, len: usize) -> 
             let hdr_lim = if len > 512 { 512 } else { len };
             let mut has_cl = 0u32;
             let mut has_te = 0u32;
+            let mut has_upg = 0u32;
             let mut body_off = 0usize;
             let mut h = i;
             while h + 18 <= hdr_lim {
@@ -707,10 +709,19 @@ pub unsafe fn canonical_l7_normalizer(dport: u16, l7: *const u8, len: usize) -> 
                     ]) & 0xDFDF_DFDF_DFDF_DFDF;
                     if w0 == 0x0D54_4E45_544E_4F43 && (*l7.add(h + 8) & 0xDF) == b'L' && *l7.add(h + 14) == b':' { has_cl += 1; }
                     if w0 == 0x5245_4653_4E41_5254 && (*l7.add(h + 16) & 0xDF) == b'G' && *l7.add(h + 17) == b':' { has_te += 1; }
+                    if (w0 & 0x00FF_FFFF_FFFF_FFFF) == 0x0045_4441_5247_5055 && *l7.add(h + 7) == b':' { has_upg += 1; }
+                    if (w0 & 0x0000_0000_FFFF_FFFF) == 0x0000_0000_5453_4F48 && *l7.add(h + 4) == b':' {
+                        let mut v = h + 5;
+                        while v + 9 <= hdr_lim && (*l7.add(v) == b' ' || *l7.add(v) == b'	') { v += 1; }
+                        if v + 9 <= hdr_lim {
+                            let hv = u64::from_le_bytes([*l7.add(v), *l7.add(v+1), *l7.add(v+2), *l7.add(v+3), *l7.add(v+4), *l7.add(v+5), *l7.add(v+6), *l7.add(v+7)]);
+                            if (hv & 0xFFFF_FFFF) == 0x2E37_3231 || hv == 0x2E34_3532_2E39_3631 || ((hv & 0xDFDF_DFDF_DFDF_DFDF) == 0x534F_484C_4143_4F4C && (*l7.add(v + 8) & 0xDF) == b'T') { return 2; }
+                        }
+                    }
                 }
                 h += 1;
             }
-            if (has_cl != 0 && has_te != 0) || has_cl > 1 || has_te > 1 { return 2; }
+            if (has_cl != 0 && has_te != 0) || has_cl > 1 || has_te > 1 || (has_upg != 0 && (has_te != 0 || has_cl != 0)) { return 2; }
             if body_off > 0 && body_off + 6 <= len {
                 let b = u32::from_le_bytes([
                     *l7.add(body_off), *l7.add(body_off + 1), *l7.add(body_off + 2), *l7.add(body_off + 3)
