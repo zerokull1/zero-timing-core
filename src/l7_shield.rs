@@ -650,11 +650,18 @@ pub unsafe fn canonical_l7_normalizer(dport: u16, l7: *const u8, len: usize) -> 
         if flen != 4 || inc == 0 || inc >= 0x4000_0000 { return 2; }
     }
     if len >= 12 {
-        let m0 = u32::from_le_bytes([*l7, *l7.add(1), *l7.add(2), *l7.add(3)]) & 0xDFDF_DFDF;
-        let is_http = ((m0 & 0x00FF_FFFF) == 0x0054_4547) || (m0 == 0x5453_4F50) || (m0 == 0x4441_4548) || ((m0 & 0x00FF_FFFF) == 0x0054_5550);
-        if is_http {
-            let uri_lim = if len > 256 { 256 } else { len };
-            let mut i = 4usize;
+        let mut uri_start = 0usize;
+        let mut m = 0usize;
+        while m < 10 && m + 1 < len {
+            let c = *l7.add(m);
+            if c == 0x20 && m >= 3 { uri_start = m + 1; break; }
+            let cu = c & 0xDF;
+            if cu < b'A' || cu > b'Z' { break; }
+            m += 1;
+        }
+        if uri_start != 0 {
+            let uri_lim = if len > 512 { 512 } else { len };
+            let mut i = uri_start;
             while i + 2 <= uri_lim {
                 let b0 = *l7.add(i);
                 if b0 == 0x0D || b0 == 0x0A { break; }
@@ -676,7 +683,7 @@ pub unsafe fn canonical_l7_normalizer(dport: u16, l7: *const u8, len: usize) -> 
             let mut has_te = 0u32;
             let mut body_off = 0usize;
             let mut h = i;
-            while h + 16 <= hdr_lim {
+            while h + 18 <= hdr_lim {
                 if *l7.add(h) == 0x0D && *l7.add(h + 1) == 0x0A && *l7.add(h + 2) == 0x0D && *l7.add(h + 3) == 0x0A {
                     body_off = h + 4;
                     break;
@@ -686,8 +693,8 @@ pub unsafe fn canonical_l7_normalizer(dport: u16, l7: *const u8, len: usize) -> 
                         *l7.add(h), *l7.add(h + 1), *l7.add(h + 2), *l7.add(h + 3),
                         *l7.add(h + 4), *l7.add(h + 5), *l7.add(h + 6), *l7.add(h + 7)
                     ]) & 0xDFDF_DFDF_DFDF_DFDF;
-                    if w0 == 0x0D54_4E45_544E_4F43 { has_cl += 1; }
-                    if w0 == 0x5245_4653_4E41_5254 { has_te += 1; }
+                    if w0 == 0x0D54_4E45_544E_4F43 && (*l7.add(h + 8) & 0xDF) == b'L' && *l7.add(h + 14) == b':' { has_cl += 1; }
+                    if w0 == 0x5245_4653_4E41_5254 && (*l7.add(h + 16) & 0xDF) == b'G' && *l7.add(h + 17) == b':' { has_te += 1; }
                 }
                 h += 1;
             }

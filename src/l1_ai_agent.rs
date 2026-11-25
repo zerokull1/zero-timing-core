@@ -47,7 +47,7 @@ pub unsafe extern "C" fn l1_agent_step_avx2(
     ddr: *mut AgentDdrMemory,
     teacher_signal: i32,
 ) -> u32 { unsafe {
-    if features.is_null() || ddr.is_null() {
+    if features.is_null() || ddr.is_null() || ((ddr as usize) & 31) != 0 {
         return 0;
     }
     let mem = &mut *ddr;
@@ -71,13 +71,15 @@ pub unsafe extern "C" fn l1_agent_step_avx2(
 
     // 2. Write-on-Learn: mutate DDR synaptic weights only when teacher_signal != 0 (avoids store-forwarding stall)
     if teacher_signal != 0 {
-        let active_mask = _mm256_cmpgt_epi8(x, _mm256_set1_epi8(16));
+        let sbit = _mm256_set1_epi8(-128);
+        let active_mask = _mm256_cmpgt_epi8(_mm256_xor_si256(x, sbit), _mm256_set1_epi8(-112));
         let pos_mask    = _mm256_set1_epi8((teacher_signal > 0) as i8);
         let neg_mask    = _mm256_set1_epi8((teacher_signal < 0) as i8);
         let delta_pos   = _mm256_and_si256(active_mask, pos_mask);
         let delta_neg   = _mm256_and_si256(active_mask, neg_mask);
 
-        let w_new = _mm256_subs_epi8(_mm256_adds_epi8(w, delta_pos), delta_neg);
+        let w_raw = _mm256_subs_epi8(_mm256_adds_epi8(w, delta_pos), delta_neg);
+        let w_new = _mm256_min_epi8(w_raw, _mm256_set1_epi8(3));
         _mm256_store_si256(mem.weights.as_mut_ptr() as *mut __m256i, w_new);
         mem.learned_attacks = mem.learned_attacks.wrapping_add((teacher_signal > 0) as u64);
         mem.learned_clean   = mem.learned_clean.wrapping_add((teacher_signal < 0) as u64);
@@ -95,7 +97,7 @@ pub unsafe extern "C" fn l1_agent_step_avx2(
     ddr: *mut AgentDdrMemory,
     teacher_signal: i32,
 ) -> u32 { unsafe {
-    if features.is_null() || ddr.is_null() {
+    if features.is_null() || ddr.is_null() || ((ddr as usize) & 31) != 0 {
         return 0;
     }
     let mem = &mut *ddr;
@@ -105,8 +107,8 @@ pub unsafe extern "C" fn l1_agent_step_avx2(
         let xi = *features.add(i);
         let wi = mem.weights[i];
         score = score.wrapping_add((xi as i32) * (wi as i32));
-        if teacher_signal != 0 && (xi as i8) > 16 {
-            mem.weights[i] = if teacher_signal > 0 { wi.saturating_add(1) } else { wi.saturating_sub(1) };
+        if teacher_signal != 0 && xi > 16 {
+            mem.weights[i] = if teacher_signal > 0 { wi.saturating_add(1).min(3) } else { wi.saturating_sub(1) };
         }
         i += 1;
     }
