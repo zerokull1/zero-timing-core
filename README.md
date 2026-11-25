@@ -193,6 +193,8 @@ sudo sysctl -w net.ipv6.conf.eth1.disable_ipv6=1 && sudo ethtool -K eth1 gro off
 - **Idempotent Pulse Barrier & W^X Bounds**: Enforces strict `W^X` copy limits (`vm <= 512B`, `mcode <= 512B`, `mono <= 7168B`), capsule count ceiling (`n_caps <= 256`), and atomic idempotent `trip_fail_close()` (`swap(1, AcqRel)`) across **68 audited full-stack vectors**.
 - **Core #3 L1d Eviction Trap Hardening**: Secures `/dev/shm/zeromani_core3_guard` with `O_NOFOLLOW | 0600`, enforces SMI-resistant min-64 `RDTSCP` baseline calibration (`<= 600` cycles), and triggers hardware `clflush` line eviction on cryo/hypervisor alerts across **68 audited full-stack vectors**.
 
+- **UEFI Boot Master CPU Pulse & Periodic Hardware Re-Align (`uefi_stage0/`, `zero_hal/src/tsc.rs`)**: Calibrates a 64B-aligned `HardwarePulseAnchor` via serialized `RDTSCP + LFENCE` at Pre-OS boot (`[PULSE-0]`) and dynamically re-aligns batching cadence (`>> 3` shift-only) on `CPUID.01H` or NIC/DDR hardware swaps across **68 audited full-stack vectors**.
+
 ## Engineering Roadmap
 See [ROADMAP.md](ROADMAP.md) ([Русская версия](ROADMAP.ru.md)) for Phase 1–4 milestones from 68-vector silicon hardening to `AF_XDP` Zero-Copy and SmartNIC offload.
 - **Linux Kernel Ring-0 DKMS Engine Hardening (`zero_timing_ring0`)**: Boots directly into `MODE=ENFORCE`, restricts `/proc/zero_timing_ring0` to `0600`, enforces `synchronize_rcu()` on unload, and blocks Land attacks (`saddr == daddr`), Zero-QUIC (`UDP/443,8443`), and `RFC 793` TCP flag/OOB anomalies in Ring 0 across **68 audited full-stack vectors**.
