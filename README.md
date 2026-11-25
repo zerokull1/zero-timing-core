@@ -197,6 +197,8 @@ sudo sysctl -w net.ipv6.conf.eth1.disable_ipv6=1 && sudo ethtool -K eth1 gro off
 
 - **Zero-Allocation Host Watchdog (`zero-host-guard` & Module #6)**: Inspects immutable `/proc/[pid]/exe` symlinks alongside `cmdline`, handles `IN_Q_OVERFLOW` bursts, locks `~/.zero_host_guard.log` with `O_NOFOLLOW | 0600`, and freezes unauthorized autonomous agents (`SIGSTOP`) with zero heap allocations across **73 audited full-stack vectors**.
 
+- **Interactive Operator Console & SIEM CEF Exporter (`tools/zero_ctl.c` & `zeromani_hud`)**: Zero-dependency CLI & GPU operator console with real-time XDP/L2 IP radar for instant east-west rack isolation, live Blacklist/Whitelist controls, EN/RU UI, and SIEM CEF telemetry export across **73 audited vectors**.
+
 ## Engineering Roadmap
 See [ROADMAP.md](ROADMAP.md) ([Русская версия](ROADMAP.ru.md)) for Phase 1–4 milestones from 73-vector silicon hardening to `AF_XDP` Zero-Copy and SmartNIC offload.
 - **Linux Kernel Ring-0 DKMS Engine Hardening (`zero_timing_ring0`)**: Boots directly into `MODE=ENFORCE`, restricts `/proc/zero_timing_ring0` to `0600`, enforces `synchronize_rcu()` on unload, and blocks Land attacks (`saddr == daddr`), Zero-QUIC (`UDP/443,8443`), and `RFC 793` TCP flag/OOB anomalies in Ring 0 across **73 audited full-stack vectors**.
