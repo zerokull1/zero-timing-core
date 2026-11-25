@@ -172,3 +172,7 @@ This kernel is intentionally engineered as a **deterministic L2–L7 perimeter g
 
 - **In Scope (L1i / XDP Hot-Path, ~25–39 cycles/pkt):** Line-rate L3/L4 anomaly drop, branchless SWAR/SIMD normalization (`CL+TE` HTTP smuggling, mixed-case URI traversal `..;/`, HTTP/2 header bombs, stateless `UDP/443` QUIC fallback to TLS 1.3), and zero-allocation IP quarantine.
 - **Explicit Non-Goals (ICAP / Application / Endpoint Layers):** No full TCP stream reassembly, no file carving, and no ZIP/PDF/ELF unpacking or YARA payload scanning inside the privileged perimeter path.
+
+## Red Team Hardening: Unsigned AVX2 AI & Canonical L7 (25.11.2026)
+- **Unsigned `u8` Feature Learning (`src/l1_ai_agent.rs`)**: Sign-axis shift (`_mm256_xor_si256` `0x80` + `vpcmpgtb`) eliminating signed saturation blind spots for high-amplitude features (`128..255`), 32B alignment guard, and weight saturation capping (`clean_fp = 0`).
+- **Collision-Free Canonical Normalizer (`src/l7_shield.rs`)**: Full HTTP/1.x method coverage (512B URI window) and exact `Content-Length:` vs `Content-Type:` header disambiguation.
