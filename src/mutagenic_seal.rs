@@ -80,7 +80,7 @@ impl MutagenicKey512 {
             "sfence",
             a = in(reg) anomaly,
             st = in(reg) state_ptr,
-            dst = inout(reg) target,
+            dst = inout(reg) target => _,
             z = in(reg) 0u64,
             options(nostack)
         );
