@@ -98,3 +98,58 @@ pub fn constant_time_jittered_gate<F: FnOnce() -> R, R>(base_cycles: u64, jitter
     }
     result
 }
+
+/// 64B-aligned Master CPU Pulse Anchor calibrated at UEFI boot and periodically re-aligned in runtime
+/// when server hardware (CPU, DDR, NIC) or link speed changes.
+#[repr(C, align(64))]
+#[derive(Clone, Copy)]
+pub struct HardwarePulseAnchor {
+    pub cpu_sig: u32,
+    pub target_batch: u32,
+    pub base_pulse_tsc: u64,
+    pub current_period_tsc: u64,
+    pub last_pulse_tsc: u64,
+    pub realign_epochs: u64,
+    pub _pad: [u64; 3],
+}
+
+impl HardwarePulseAnchor {
+    #[inline(always)]
+    pub const fn new(cpu_sig: u32, base_pulse_tsc: u64, target_batch: u32) -> Self {
+        Self {
+            cpu_sig,
+            target_batch,
+            base_pulse_tsc,
+            current_period_tsc: base_pulse_tsc,
+            last_pulse_tsc: 0,
+            realign_epochs: 0,
+            _pad: [0; 3],
+        }
+    }
+
+    /// Periodic lock-free pulse re-alignment (integer shift-only, zero float/div).
+    #[inline(always)]
+    pub fn periodic_realign(&mut self, cur_cpu_sig: u32, now_tsc: u64, arrived_pkts: u32) -> bool {
+        if cur_cpu_sig != self.cpu_sig {
+            self.cpu_sig = cur_cpu_sig;
+            self.current_period_tsc = self.base_pulse_tsc;
+            self.last_pulse_tsc = now_tsc;
+            self.realign_epochs = self.realign_epochs.wrapping_add(1);
+            return true;
+        }
+        let dt = now_tsc.wrapping_sub(self.last_pulse_tsc);
+        if dt < self.current_period_tsc && arrived_pkts < self.target_batch {
+            return false;
+        }
+        self.last_pulse_tsc = now_tsc;
+        self.realign_epochs = self.realign_epochs.wrapping_add(1);
+        if arrived_pkts > self.target_batch {
+            let next = self.current_period_tsc - (self.current_period_tsc >> 3);
+            self.current_period_tsc = if next < 2000 { 2000 } else { next };
+        } else if arrived_pkts < (self.target_batch >> 1) {
+            let next = self.current_period_tsc + (self.current_period_tsc >> 3);
+            self.current_period_tsc = if next > 3_300_000 { 3_300_000 } else { next };
+        }
+        true
+    }
+}

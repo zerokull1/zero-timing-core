@@ -154,6 +154,69 @@ unsafe fn rdtscp_serialized() -> u64 {
     ((hi as u64) << 32) | (lo as u64)
 }
 
+#[repr(C, align(64))]
+struct UefiPulseAnchor {
+    cpu_sig: u32,
+    target_batch: u32,
+    base_period_tsc: u64,
+    cur_period_tsc: u64,
+    last_pulse_tsc: u64,
+    realign_count: u64,
+    _pad: [u64; 3],
+}
+
+#[inline(always)]
+unsafe fn cpuid_leaf1_sig() -> u32 {
+    let eax: u32;
+    asm!("push rbx", "mov eax, 1", "xor ecx, ecx", "cpuid", "pop rbx",
+         out("eax") eax, out("ecx") _, out("edx") _, options(nomem, nostack));
+    eax
+}
+
+#[inline(never)]
+unsafe fn calibrate_uefi_boot_pulse() -> UefiPulseAnchor {
+    let sig = cpuid_leaf1_sig();
+    let t0 = rdtscp_serialized();
+    for _ in 0..256u32 { core::hint::spin_loop(); }
+    let t1 = rdtscp_serialized();
+    let probe = t1.wrapping_sub(t0);
+    let base = if probe > 0 && probe < 200_000 { probe << 5 } else { 32_000 };
+    UefiPulseAnchor {
+        cpu_sig: sig,
+        target_batch: 32,
+        base_period_tsc: base,
+        cur_period_tsc: base,
+        last_pulse_tsc: t1,
+        realign_count: 1,
+        _pad: [0; 3],
+    }
+}
+
+#[inline(always)]
+unsafe fn periodic_realign_pulse(a: &mut UefiPulseAnchor, now_tsc: u64, arrived: u32) -> bool {
+    let sig = cpuid_leaf1_sig();
+    if sig != a.cpu_sig {
+        a.cpu_sig = sig;
+        a.cur_period_tsc = a.base_period_tsc;
+        a.last_pulse_tsc = now_tsc;
+        a.realign_count = a.realign_count.wrapping_add(1);
+        return true;
+    }
+    if now_tsc.wrapping_sub(a.last_pulse_tsc) < a.cur_period_tsc && arrived < a.target_batch {
+        return false;
+    }
+    a.last_pulse_tsc = now_tsc;
+    a.realign_count = a.realign_count.wrapping_add(1);
+    if arrived > a.target_batch {
+        let n = a.cur_period_tsc - (a.cur_period_tsc >> 3);
+        a.cur_period_tsc = if n < 2000 { 2000 } else { n };
+    } else if arrived < (a.target_batch >> 1) {
+        let n = a.cur_period_tsc + (a.cur_period_tsc >> 3);
+        a.cur_period_tsc = if n > 3_300_000 { 3_300_000 } else { n };
+    }
+    true
+}
+
 // Безветвящийся L7 + TTL Shield в голом Ring 0
 #[inline(always)]
 fn ring0_inspect_packet(ttl: u8, expected_ttl: u8, payload_magic: u64) -> u64 {
@@ -198,6 +261,10 @@ pub extern "efiapi" fn efi_main(image_handle: EfiHandle, system_table: *const Ef
         serial_write_bytes(b"[OK] Interrupts masked (cli). Pure Polling Mode engaged.\r\n");
         lock_hardware_nxe_and_smram();
         serial_write_bytes(b"[SEC] Hardware EFER.NXE Enabled + SMRAM D_LCK Locked [OK]\r\n");
+        let mut boot_pulse = calibrate_uefi_boot_pulse();
+        serial_write_bytes(b"[PULSE-0] UEFI Boot Master Pulse Calibrated | Period=");
+        serial_write_u64(boot_pulse.cur_period_tsc);
+        serial_write_bytes(b" cycles\r\n");
 
         static mut RACK_CORE0_CTX: thin_hypervisor::PerCoreRackContext = thin_hypervisor::PerCoreRackContext::new();
         static mut RACK_EPT_PT: thin_hypervisor::EptPageTable = thin_hypervisor::EptPageTable::new();
@@ -251,6 +318,7 @@ pub extern "efiapi" fn efi_main(image_handle: EfiHandle, system_table: *const Ef
             let ttl = if (idx & 7) == 0 { 41 } else { 64 };
             let magic = if (idx & 15) == 0 { 0x5A45524F_44524F50 } else { 0x11223344_55667788 };
             dropped += core::hint::black_box(ring0_inspect_packet(ttl, 64, magic));
+            if (idx & 0x3FFF) == 0 { let _ = periodic_realign_pulse(&mut boot_pulse, rdtscp_serialized(), 32); }
         }
         let t1 = rdtscp_serialized();
         let cycles_per_pkt = (t1.wrapping_sub(t0)) / batch;
