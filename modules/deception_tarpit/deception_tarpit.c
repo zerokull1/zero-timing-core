@@ -59,8 +59,10 @@ static int tarpit_init(uint64_t seed) {
 
 // Semantic Context Tarpit (1B/probe, TCP Window=1) + RTO Jitter-Mirroring (180..243 ms)
 static size_t tarpit_process_frame(uint8_t *buf, size_t len, size_t max_cap, uint64_t *out_delay_ns) {
-    if (!buf || len < 54) return 0;
+    if (!buf || len < 54 || max_cap < 54) return 0;
     if (*(buf + 12) != 0x08 || *(buf + 13) != 0x00 || *(buf + 23) != 6) return 0;
+    uint8_t in_flags = *(buf + 47);
+    if ((in_flags & 0x04U) != 0U || in_flags == 0U || (in_flags & 0x03U) == 0x03U || ((in_flags & 0x01U) != 0U && (in_flags & 0x10U) == 0U)) return 0;
 
     uint8_t tmp_mac0 = *(buf + 0), tmp_mac1 = *(buf + 1), tmp_mac2 = *(buf + 2);
     uint8_t tmp_mac3 = *(buf + 3), tmp_mac4 = *(buf + 4), tmp_mac5 = *(buf + 5);
@@ -71,6 +73,7 @@ static size_t tarpit_process_frame(uint8_t *buf, size_t len, size_t max_cap, uin
     uint32_t src_ip = 0, dst_ip = 0;
     memcpy(&src_ip, buf + 26, 4);
     memcpy(&dst_ip, buf + 30, 4);
+    if (src_ip == dst_ip || src_ip == 0U || dst_ip == 0U || src_ip == 0xFFFFFFFFU || dst_ip == 0xFFFFFFFFU) return 0;
     memcpy(buf + 26, &dst_ip, 4);
     memcpy(buf + 30, &src_ip, 4);
 
@@ -90,7 +93,8 @@ static size_t tarpit_process_frame(uint8_t *buf, size_t len, size_t max_cap, uin
     uint32_t out_seq_host = host_in_ack ? host_in_ack : (uint32_t)(tarpit_seed ^ bswap32(src_ip));
     uint32_t out_seq = bswap32(out_seq_host);
 
-    uint16_t emit_bait = (max_cap >= 55) ? 1U : 0U;
+    uint8_t is_pure_syn = ((in_flags & 0x12U) == 0x02U) ? 1U : 0U;
+    uint16_t emit_bait = (!is_pure_syn && max_cap >= 55) ? 1U : 0U;
     uint16_t ip_tot_len = (uint16_t)(40U + emit_bait);
     uint16_t tcp_seg_len = (uint16_t)(20U + emit_bait);
 
@@ -107,7 +111,7 @@ static size_t tarpit_process_frame(uint8_t *buf, size_t len, size_t max_cap, uin
     memcpy(buf + 42, &ack_num, 4);
 
     *(buf + 46) = 0x50;
-    *(buf + 47) = emit_bait ? 0x18 : 0x10; // PSH+ACK при отдаче 1B или чистый ACK
+    *(buf + 47) = is_pure_syn ? 0x12 : (emit_bait ? 0x18 : 0x10); // Честный SYN+ACK на SYN по RFC 793, затем PSH+ACK 1B
     *(buf + 48) = 0x00;
     *(buf + 49) = 0x01; // TCP Window = 1 байт (удержание сессии без RST)
     *(buf + 50) = 0x00;
