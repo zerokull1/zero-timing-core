@@ -108,7 +108,7 @@ pub unsafe extern "C" fn l1_agent_step_avx2(
         let wi = mem.weights[i];
         score = score.wrapping_add((xi as i32) * (wi as i32));
         if teacher_signal != 0 && xi > 16 {
-            mem.weights[i] = if teacher_signal > 0 { wi.saturating_add(1).min(3) } else { wi.saturating_sub(1) };
+            mem.weights[i] = if teacher_signal > 0 { wi.saturating_add(1).min(3) } else { wi.saturating_sub(1).max(1) };
         }
         i += 1;
     }
