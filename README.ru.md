@@ -170,3 +170,4 @@ sudo sysctl -w net.ipv6.conf.eth1.disable_ipv6=1 && sudo ethtool -K eth1 gro off
 
 ## Дорожная карта развития
 Подробный план этапов (Фазы 1–4: от 64-векторной защиты железа до `AF_XDP` Zero-Copy и разгрузки на SmartNIC) см. в [ROADMAP.ru.md](ROADMAP.ru.md).
+- **Защита DKMS-модуля ядра Linux Ring 0 (`zero_timing_ring0`)**: Стартует сразу в боевом режиме `MODE=ENFORCE`, закрывает `/proc/zero_timing_ring0` правами `0600`, гарантирует `synchronize_rcu()` при выгрузке и отсекает Land-атаки, Zero-QUIC (`UDP/443,8443`) и аномалии `RFC 793` на уровне ядра в рамках **68 закрытых сквозных уязвимостей**.

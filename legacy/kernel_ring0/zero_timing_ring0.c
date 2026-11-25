@@ -18,7 +18,7 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("zerokull1 (ZEROMANI)");
 MODULE_DESCRIPTION("Zero-Timing Core: Monolithic Ring-0 Engine v2.4");
 
-static atomic_t engine_enforce_mode   = ATOMIC_INIT(0);
+static atomic_t engine_enforce_mode   = ATOMIC_INIT(1);
 static atomic_t const_time_window_tsc = ATOMIC_INIT(0);
 static u64 epoch_salt                 = 0x9E3779B97F4A7C15ULL;
 static u64 epoch_salt_hi              = 0x517CC1B727220A95ULL;
@@ -287,18 +287,16 @@ static unsigned int zero_nf_hook(void *priv, struct sk_buff *skb, const struct n
     struct iphdr *iph;
     struct tcphdr *tcph;
     u32 ihl, thl, tot, plen, v;
-    u8 buf[128] __aligned(64);
+    u8 buf[512];
     const u8 *p;
     bool ban;
 
-    if (unlikely(!skb || skb_headlen(skb) < sizeof(struct iphdr))) {
-        if (!skb || !pskb_may_pull(skb, sizeof(struct iphdr))) return NF_ACCEPT;
-    }
+    if (!skb || !pskb_may_pull(skb, sizeof(struct iphdr))) return NF_ACCEPT;
     iph = ip_hdr(skb);
-    if (unlikely(!iph)) return NF_ACCEPT;
+    if (!iph) return NF_ACCEPT;
     atomic64_inc(&stat_rx_pkts);
 
-    if ((iph->ttl == 65 || iph->ttl == 129) && iph->saddr == iph->daddr) {
+    if (iph->saddr == iph->daddr || iph->ttl == 0 || iph->ttl == 65 || iph->ttl == 129) {
         atomic64_inc(&stat_ttl_anomaly);
         sentinel_observe_and_check_ban(iph->saddr, false, false, t0);
         atomic64_add(rdtsc() - t0, &stat_total_cycles);
@@ -316,6 +314,19 @@ static unsigned int zero_nf_hook(void *priv, struct sk_buff *skb, const struct n
         return NF_ACCEPT;
     }
 
+    if (iph->protocol == IPPROTO_UDP) {
+        if (pskb_may_pull(skb, (iph->ihl * 4) + 8)) {
+            const u8 *uh = (const u8 *)ip_hdr(skb) + (iph->ihl * 4);
+            u16 udp_dp = ((u16)*(uh + 2) << 8) | *(uh + 3);
+            if (udp_dp == 443 || udp_dp == 8443) {
+                atomic64_inc(&stat_other_blocked);
+                sentinel_observe_and_check_ban(iph->saddr, false, false, t0);
+                if (atomic_read(&engine_enforce_mode)) { atomic64_inc(&stat_dropped_pkts); return NF_DROP; }
+            }
+        }
+        atomic64_inc(&stat_clean_pass);
+        return NF_ACCEPT;
+    }
     if (iph->protocol != IPPROTO_TCP) {
         atomic64_inc(&stat_clean_pass);
         atomic64_add(rdtsc() - t0, &stat_total_cycles);
@@ -330,6 +341,21 @@ static unsigned int zero_nf_hook(void *priv, struct sk_buff *skb, const struct n
     thl = tcph->doff * 4;
     if (thl < sizeof(struct tcphdr) || skb->len < ihl + thl) return NF_ACCEPT;
     tot = ihl + thl;
+    {
+        u8 tfl = *((const u8 *)tcph + 13);
+        u16 uptr = ntohs(tcph->urg_ptr);
+        u32 l7l = skb->len - tot;
+        if (tfl == 0 || (tfl & 0x03) == 0x03 || (tfl & 0x06) == 0x06 || (tfl & 0x05) == 0x05 ||
+            ((tfl & 0x29) != 0 && (tfl & 0x10) == 0) ||
+            ((tfl & 0x12) == 0x02 && l7l > 0) ||
+            (uptr != 0 && (tfl & 0x20) == 0) ||
+            ((tfl & 0x20) != 0 && (uptr == 0 || uptr > l7l))) {
+            atomic64_inc(&stat_other_blocked);
+            sentinel_observe_and_check_ban(iph->saddr, false, false, t0);
+            if (atomic_read(&engine_enforce_mode)) { atomic64_inc(&stat_dropped_pkts); return NF_DROP; }
+            return NF_ACCEPT;
+        }
+    }
 
     fhash = hash_5tuple_ring0_hw(iph->saddr, iph->daddr, tcph->source, tcph->dest, iph->protocol);
 
@@ -344,16 +370,16 @@ static unsigned int zero_nf_hook(void *priv, struct sk_buff *skb, const struct n
         }
 
         plen = skb->len - tot;
-        p = skb_header_pointer(skb, tot, plen < 128 ? plen : 128, buf);
+        p = skb_header_pointer(skb, tot, plen < 512 ? plen : 512, buf);
         if (!p) return NF_ACCEPT;
 
         {
             u64 cur_head = plen >= 8 ? *(const u64 *)p : 0;
-            u64 cur_tail = plen >= 8 ? *(const u64 *)(p + (plen >= 128 ? 120 : plen - 8)) : 0;
+            u64 cur_tail = plen >= 8 ? *(const u64 *)(p + (plen >= 512 ? 504 : plen - 8)) : 0;
             u64 prev_tail = track_flow_stateful(fhash, skb->len, t0, cur_tail, plen, ntohl(tcph->seq), tcph->syn, tcph->ack, &est);
             u16 dport = ntohs(tcph->dest);
             bool l7_ok;
-            v = inspect_l7_ring0_asm(p, plen < 128 ? plen : 128, dport);
+            v = inspect_l7_ring0_asm(p, plen < 512 ? plen : 512, dport);
             if (v == 0 && prev_tail != 0 && cur_head != 0) {
                 u64 stitched[2] = { prev_tail, cur_head };
                 v = inspect_l7_ring0_asm((const u8 *)stitched, 16, dport);
@@ -431,7 +457,7 @@ static int __init zero_ring0_init(void)
         u64 s = epoch_salt ^ ((u64)(cpu + 1) * 0x9E3779B97F4A7C15ULL);
         per_cpu(percpu_jitter_state, cpu) = s ? s : 0xCAFEBABE12345678ULL;
     }
-    proc_create("zero_timing_ring0", 0644, NULL, &zero_proc_ops);
+    proc_create("zero_timing_ring0", 0600, NULL, &zero_proc_ops);
     if (nf_register_net_hook(&init_net, &zero_nf_ops) < 0) {
         remove_proc_entry("zero_timing_ring0", NULL);
         return -EINVAL;
@@ -443,6 +469,7 @@ static int __init zero_ring0_init(void)
 static void __exit zero_ring0_exit(void)
 {
     nf_unregister_net_hook(&init_net, &zero_nf_ops);
+    synchronize_rcu();
     remove_proc_entry("zero_timing_ring0", NULL);
     pr_info("zeromani_ring0: MONOLITHIC RING-0 ENGINE v2.4 UNLOADED.\n");
 }
