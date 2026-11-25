@@ -1,3 +1,4 @@
+// ZEROMANI (zerokull1) | Author Signature: 0x5A45524F4D414E49ULL
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdint.h>
@@ -7,16 +8,21 @@
 #include <fcntl.h>
 #include <time.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <linux/io_uring.h>
 
 #define ZEROMANI_MAGIC 0x494E414D4F52455AULL
+#define HEADER_ALIGN   4096ULL
 
-typedef struct __attribute__((packed)) {
+typedef struct __attribute__((aligned(64))) {
     uint64_t magic;
     uint32_t version;
     uint32_t snaplen;
     uint64_t pkt_count;
+    uint64_t quota_bytes;
+    uint64_t ring_cursor;
+    uint64_t _pad[3];
 } dump_header_t;
 
 typedef struct {
@@ -39,9 +45,13 @@ static inline int sys_io_uring_enter(int fd, unsigned to_submit, unsigned min_co
     return (int)syscall(__NR_io_uring_enter, fd, to_submit, min_complete, flags, NULL, 0);
 }
 
-int main() {
+int main(void) {
     const size_t BATCH_SLOTS = 1024;
-    const size_t RING_BYTES = BATCH_SLOTS * sizeof(dump_slot_t);
+    const size_t RING_BYTES = BATCH_SLOTS * sizeof(dump_slot_t); /* 256 KiB */
+    const uint64_t DATA_QUOTA_BYTES = 4ULL * 1024ULL * 1024ULL;  /* 4 MiB power-of-2 ring */
+    const uint64_t DATA_RING_MASK   = DATA_QUOTA_BYTES - 1ULL;
+    const uint64_t TOTAL_FILE_QUOTA = HEADER_ALIGN + DATA_QUOTA_BYTES;
+    const int TOTAL_BATCHES = 64; /* 16 MiB stream -> 4 full ring wraps */
 
     dump_slot_t *slots = aligned_alloc(4096, RING_BYTES);
     if (!slots) { perror("aligned_alloc"); return 1; }
@@ -58,7 +68,7 @@ int main() {
     struct io_uring_params p;
     memset(&p, 0, sizeof(p));
     int ring_fd = sys_io_uring_setup(32, &p);
-    if (ring_fd < 0) { perror("io_uring_setup"); return 1; }
+    if (ring_fd < 0) { perror("io_uring_setup"); free(slots); return 1; }
 
     size_t sq_ring_sz = p.sq_off.array + p.sq_entries * sizeof(unsigned);
     size_t cq_ring_sz = p.cq_off.cqes + p.cq_entries * sizeof(struct io_uring_cqe);
@@ -76,29 +86,33 @@ int main() {
     unsigned *sq_array = (unsigned *)((char *)sq_ptr + p.sq_off.array);
 
     const char *dump_path = "/tmp/zero_forensic_flight.zcap";
-    int out_fd = open(dump_path, O_CREAT | O_WRONLY | O_TRUNC, 0600);
+    unlink(dump_path);
+    int out_fd = open(dump_path, O_CREAT | O_RDWR | O_NOFOLLOW | O_TRUNC, 0600);
     if (out_fd < 0) { perror("open dump"); return 1; }
+    if (ftruncate(out_fd, (off_t)TOTAL_FILE_QUOTA) != 0) { perror("ftruncate quota"); return 1; }
 
     dump_header_t hdr = {
         .magic = ZEROMANI_MAGIC,
-        .version = 1,
+        .version = 2,
         .snaplen = (uint32_t)sizeof(dump_slot_t),
-        .pkt_count = BATCH_SLOTS * 20
+        .pkt_count = (uint64_t)BATCH_SLOTS * (uint64_t)TOTAL_BATCHES,
+        .quota_bytes = TOTAL_FILE_QUOTA,
+        .ring_cursor = 0
     };
-    if (write(out_fd, &hdr, sizeof(hdr)) != sizeof(hdr)) { perror("write hdr"); return 1; }
+    if (pwrite(out_fd, &hdr, sizeof(hdr), 0) != (ssize_t)sizeof(hdr)) { perror("pwrite hdr"); return 1; }
 
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
 
-    uint64_t file_offset = sizeof(hdr);
-    for (int batch = 0; batch < 20; batch++) {
+    uint64_t ring_cursor = 0;
+    for (int batch = 0; batch < TOTAL_BATCHES; batch++) {
         unsigned tail = *sq_tail;
         unsigned idx = tail & *sq_mask;
         struct io_uring_sqe *sqe = sqes + idx;
         memset(sqe, 0, sizeof(*sqe));
         sqe->opcode = IORING_OP_WRITE;
         sqe->fd = out_fd;
-        sqe->off = file_offset;
+        sqe->off = HEADER_ALIGN + (ring_cursor & DATA_RING_MASK);
         sqe->addr = (uint64_t)(uintptr_t)slots;
         sqe->len = (uint32_t)RING_BYTES;
 
@@ -109,30 +123,43 @@ int main() {
             perror("io_uring_enter");
             return 1;
         }
-        file_offset += RING_BYTES;
+        ring_cursor += RING_BYTES;
     }
+
+    hdr.ring_cursor = ring_cursor;
+    if (pwrite(out_fd, &hdr, sizeof(hdr), 0) != (ssize_t)sizeof(hdr)) { perror("pwrite final hdr"); return 1; }
 
     clock_gettime(CLOCK_MONOTONIC, &t1);
     double sec = (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) * 1e-9;
-    double mb = (double)file_offset / (1024.0 * 1024.0);
+    double stream_mb = (double)ring_cursor / (1024.0 * 1024.0);
+
+    struct stat st;
+    if (fstat(out_fd, &st) != 0 || (uint64_t)st.st_size != TOTAL_FILE_QUOTA) {
+        fprintf(stderr, "Нарушение жёсткой квоты файла на диске!\n");
+        return 1;
+    }
 
     close(out_fd);
     close(ring_fd);
 
-    FILE *vf = fopen(dump_path, "rb");
+    int vfd = open(dump_path, O_RDONLY | O_NOFOLLOW);
     dump_header_t check_hdr;
-    if (!vf || fread(&check_hdr, sizeof(check_hdr), 1, vf) != 1 || check_hdr.magic != ZEROMANI_MAGIC) {
+    if (vfd < 0 || pread(vfd, &check_hdr, sizeof(check_hdr), 0) != (ssize_t)sizeof(check_hdr) || check_hdr.magic != ZEROMANI_MAGIC) {
         fprintf(stderr, "Ошибка проверки авторской подписи дампа!\n");
         return 1;
     }
-    fclose(vf);
+    close(vfd);
     unlink(dump_path);
+    free(slots);
 
-    printf("=== БОРТСАМОПИСЕЦ ДАМПОВ (ЧИСТЫЙ SYSCALL IO_URING, СЛОТ %zu БАЙТ) ===\n", sizeof(dump_slot_t));
+    printf("=== БОРТСАМОПИСЕЦ ДАМПОВ (IO_URING + ЖЁСТКАЯ КОЛЬЦЕВАЯ КВОТА ДИСКА) ===\n");
     printf("Авторская метка : %.8s (подтверждена)\n", (char *)&check_hdr.magic);
-    printf("Записано кадров : %llu (%.2f МБ) за %.4f сек\n",
-           (unsigned long long)check_hdr.pkt_count, mb, sec);
+    printf("Поток дампа     : %llu кадров (%.2f МБ) за %.4f сек\n",
+           (unsigned long long)check_hdr.pkt_count, stream_mb, sec);
+    printf("Квота на диске  : %.2f МБ (оборотов кольца: %llu, размер файла строго в квоте [OK])\n",
+           (double)st.st_size / (1024.0 * 1024.0),
+           (unsigned long long)(check_hdr.ring_cursor / DATA_QUOTA_BYTES));
     printf("Скорость сброса : %.2f МБ/с (%.2f млн кадров/сек)\n",
-           mb / sec, (check_hdr.pkt_count / 1e6) / sec);
+           stream_mb / sec, (check_hdr.pkt_count / 1e6) / sec);
     return 0;
 }
