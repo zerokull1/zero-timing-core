@@ -71,7 +71,7 @@ impl MutagenicKey512 {
     pub unsafe fn verify_or_vaporize(&mut self, observed_sig: u64, trap_sink: *mut u64) -> u64 { unsafe {
         let anomaly = observed_sig ^ self.hw_anchor;
         let state_ptr = self.state.as_mut_ptr() as u64;
-        let mut target = trap_sink as u64;
+        let target = trap_sink as u64;
         #[cfg(target_arch = "x86_64")]
         asm!(
             "test {a}, {a}",
