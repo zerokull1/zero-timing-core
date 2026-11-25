@@ -192,3 +192,6 @@ sudo sysctl -w net.ipv6.conf.eth1.disable_ipv6=1 && sudo ethtool -K eth1 gro off
 - **RFC 793 Deception Tarpit Hardening**: Enforces genuine `SYN+ACK` (`0x12`) handshakes, eliminates `RST`/invalid-flag amplification loops, guards `max_cap`, and blocks Land/broadcast reflection across **58 audited full-stack vectors**.
 - **Idempotent Pulse Barrier & W^X Bounds**: Enforces strict `W^X` copy limits (`vm <= 512B`, `mcode <= 512B`, `mono <= 7168B`), capsule count ceiling (`n_caps <= 256`), and atomic idempotent `trip_fail_close()` (`swap(1, AcqRel)`) across **64 audited full-stack vectors**.
 - **Core #3 L1d Eviction Trap Hardening**: Secures `/dev/shm/zeromani_core3_guard` with `O_NOFOLLOW | 0600`, enforces SMI-resistant min-64 `RDTSCP` baseline calibration (`<= 600` cycles), and triggers hardware `clflush` line eviction on cryo/hypervisor alerts across **64 audited full-stack vectors**.
+
+## Engineering Roadmap
+See [ROADMAP.md](ROADMAP.md) ([Русская версия](ROADMAP.ru.md)) for Phase 1–4 milestones from 64-vector silicon hardening to `AF_XDP` Zero-Copy and SmartNIC offload.
