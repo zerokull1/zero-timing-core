@@ -176,3 +176,6 @@ This kernel is intentionally engineered as a **deterministic L2–L7 perimeter g
 ## Red Team Hardening: Unsigned AVX2 AI & Canonical L7 (25.11.2026)
 - **Unsigned `u8` Feature Learning (`src/l1_ai_agent.rs`)**: Sign-axis shift (`_mm256_xor_si256` `0x80` + `vpcmpgtb`) eliminating signed saturation blind spots for high-amplitude features (`128..255`), 32B alignment guard, and weight saturation capping (`clean_fp = 0`).
 - **Collision-Free Canonical Normalizer (`src/l7_shield.rs`)**: Full HTTP/1.x method coverage (512B URI window) and exact `Content-Length:` vs `Content-Type:` header disambiguation.
+
+### Protocol-Geometry & East-West Quarantine
+- **Zero-Allocation L7 Semantic Gate (`src/l7_shield.rs`)**: Blocks HTTP/2 Rapid Reset, `CONTINUATION` Flood, DNS tunneling (`label_len >= 48`), `HTTP CONNECT`, WebSocket smuggling, `Host:` DNS rebinding (`127.0.0.1` / `169.254.169.254` / `localhost`), and East-West lateral-movement ports (`135`, `137-139`, `445`, `3389`, `5355`, `5985-5986`).
