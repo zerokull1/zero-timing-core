@@ -772,7 +772,7 @@ pub fn inspect_php_proto_vector_swar(buf: &[u8]) -> bool {
         let is_digit = (b2.wrapping_sub(b'0') <= 9) as u32;
         hit |= is_oc & is_colon & is_digit;
 
-        let wu = w & 0xDFDFDFFF;
+        let wu = w & 0xDFFFFFFF;
         hit |= ((wu == 0x4133254F) as u32) | ((wu == 0x41332543) as u32);
 
         let wl = w | 0x20202020;
