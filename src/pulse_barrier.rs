@@ -261,3 +261,15 @@ impl SlabLabyrinthArena {
         }
     }
 }
+
+impl SlabLabyrinthArena {
+    pub unsafe fn hw_sensor_trip_to_bank3(&mut self, salt: u64, sensor_code: u64) -> u32 {
+        let mut i = 0usize;
+        while i < 48 {
+            unsafe { zero_hal::ddr_arena::SealedDdrArena::nt_wipe_64b(self.cells.as_mut_ptr().add(i) as *mut u8); }
+            i += 1;
+        }
+        let _ = unsafe { self.admit(salt, 0xDEAD_0000_0000_0000 | sensor_code, 3, u32::MAX as u64) };
+        0xDEAD
+    }
+}
