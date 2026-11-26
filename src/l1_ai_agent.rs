@@ -113,9 +113,8 @@ unsafe fn swar_step_portable(features: *const u8, mem: &mut AgentDdrMemory, teac
     score
 }}
 
-#[inline(never)]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn l1_agent_step_avx2(
+#[inline(always)]
+pub unsafe fn l1_agent_step_avx2(
     features: *const u8,
     ddr: *mut AgentDdrMemory,
     teacher_signal: i32,
