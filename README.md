@@ -219,3 +219,6 @@ See [ROADMAP.md](ROADMAP.md) ([Русская версия](ROADMAP.ru.md)) for 
 ## Universal Hardware-Adaptive GPFIFO + GPPut Fast-Path (26 Nov 2026)
 - **Hardware-Independent Ring Auto-Detector:** Dynamically discovers compatible compute ring/doorbell offsets via monotonic memory-page calibration (`Self-Test` verified) with automatic zero-dependency SWAR/CPU fallback on headless or non-GPU hosts.
 - **Zero-Syscall / Zero-Driver Pipelined Loop (`WIN=4`):** Eliminates per-dispatch driver submission overhead (`12.03 µs` vs `17.33 µs`, **1.44x throughput gain**, **83,094 ops/sec**).
+
+### CMS & PHP Object Injection SWAR Guard (Nov 2026)
+- **Branchless Protocol Oracle:** Detects unauthenticated CMS setup routes (`/install.php`, `/update.php`, `X-Original-URL` overrides), PHP Object Injection (`O:<digit>:`, `C:<digit>:`, URL-encoded `O%3A` / `C%3A` via `0xDFFFFFFF` case-folding mask), and `phar://` deserialization wrappers within the L1i cache budget.
