@@ -65,7 +65,7 @@ impl SealedHotPerimeter {
 
     #[inline(never)]
     pub unsafe fn trip_fail_close(&self) {
-        self.trap_tripped.store(1, Ordering::Release);
+        if self.trap_tripped.swap(1, Ordering::AcqRel) != 0 { return; }
         unsafe {
             let mut off = 0usize;
             while off < 4096 {
@@ -104,7 +104,7 @@ unsafe fn crc32c_step(mut crc: u32, b: u8) -> u32 {
 
 #[cfg_attr(target_arch = "x86_64", target_feature(enable = "sse4.2"))]
 pub unsafe fn seal_and_verify_monolith_wx(mono: &[u8], vm: &[u8], mcode: &[u8]) -> *const u8 {
-    if mono.len() < 352 || vm.len() < 314 || mcode.len() < 50 {
+    if mono.len() < 352 || mono.len() > 7168 || vm.len() < 314 || vm.len() > 512 || mcode.len() < 50 || mcode.len() > 512 {
         return core::ptr::null();
     }
     let magic = u64::from_le_bytes(unsafe { *(mono.as_ptr() as *const [u8; 8]) });
@@ -112,6 +112,7 @@ pub unsafe fn seal_and_verify_monolith_wx(mono: &[u8], vm: &[u8], mcode: &[u8]) 
         return core::ptr::null();
     }
     let n_caps = u32::from_le_bytes(unsafe { *(mono.as_ptr().add(8) as *const [u8; 4]) }) as usize;
+    if n_caps > 256 { return core::ptr::null(); }
     let exp_crc = u32::from_le_bytes(unsafe { *(mono.as_ptr().add(16) as *const [u8; 4]) });
     let mut i = 32 + n_caps * 16;
     if i >= mono.len() {
@@ -185,4 +186,78 @@ pub unsafe fn emit_polymorphic_epoch_x86(dst: *mut u8, epoch_id: u32) -> (usize,
         j += 1;
     }
     (p, crc)
+}
+
+#[repr(C, align(64))]
+#[derive(Copy, Clone)]
+pub struct SlabLabyrinthCell {
+    pub tag64: u64,
+    pub expire_tsc: u64,
+    pub slab_class: u32,
+    pub strikes: u32,
+    pub locked: u32,
+    pub rto_ms: u32,
+    pub mirage_ttl: u8,
+    pub tcp_win: u8,
+    pub state: u8,
+    pub _pad: u8,
+}
+
+#[repr(C, align(64))]
+pub struct SlabLabyrinthArena {
+    pub cells: [SlabLabyrinthCell; 64],
+}
+
+impl SlabLabyrinthArena {
+    pub const fn new() -> Self {
+        Self {
+            cells: [SlabLabyrinthCell {
+                tag64: 0, expire_tsc: 0, slab_class: 0, strikes: 0,
+                locked: 0, rto_ms: 0, mirage_ttl: 0, tcp_win: 0, state: 0, _pad: 0,
+            }; 64],
+        }
+    }
+
+    pub unsafe fn admit(&mut self, salt: u64, fid: u64, threat_cls: u32, ttl_ticks: u64) -> (u8, u8, u8) {
+        let cls = threat_cls & 3;
+        let now = zero_hal::tsc::rdtsc_start();
+        let tag = fid.wrapping_mul(0x9E3779B97F4A7C15) ^ ((cls as u64) << 48) ^ salt;
+        let base = (cls as usize) * 16 + ((tag as usize & 7) * 2);
+        let (c0, c1) = unsafe {
+            let ptr = self.cells.as_mut_ptr().add(base);
+            if (*ptr).state != 0 && (*ptr).locked == 0 && (*ptr).expire_tsc <= now {
+                zero_hal::ddr_arena::SealedDdrArena::nt_wipe_64b(ptr as *mut u8);
+            }
+            if (*ptr.add(1)).state != 0 && (*ptr.add(1)).locked == 0 && (*ptr.add(1)).expire_tsc <= now {
+                zero_hal::ddr_arena::SealedDdrArena::nt_wipe_64b(ptr.add(1) as *mut u8);
+            }
+            (ptr, ptr.add(1))
+        };
+        let target = unsafe {
+            if (*c0).state != 0 && (*c0).tag64 == tag { c0 }
+            else if (*c1).state != 0 && (*c1).tag64 == tag { c1 }
+            else if (*c0).state == 0 { c0 }
+            else if (*c1).state == 0 { c1 }
+            else if cls == 0 {
+                let victim = if (*c0).expire_tsc <= (*c1).expire_tsc { c0 } else { c1 };
+                zero_hal::ddr_arena::SealedDdrArena::nt_wipe_64b(victim as *mut u8);
+                victim
+            } else {
+                return (0, 0, 0);
+            }
+        };
+        unsafe {
+            (*target).tag64 = tag;
+            (*target).slab_class = cls;
+            (*target).strikes = (*target).strikes.wrapping_add(1);
+            let mult = if cls == 2 { (*target).strikes as u64 } else { 1 };
+            (*target).expire_tsc = now.wrapping_add(ttl_ticks.wrapping_mul(mult));
+            (*target).locked = if cls == 1 || cls == 3 { 1 } else { 0 };
+            (*target).rto_ms = 190 + ((now as u32) & 0x3F);
+            (*target).mirage_ttl = if cls == 0 || cls == 2 { 65u8.wrapping_add((now as u8) & 0x35) } else { 0 };
+            (*target).tcp_win = if cls == 0 || cls == 2 { 1 } else { 0 };
+            (*target).state = if cls == 3 { 3 } else if cls == 0 || cls == 2 { 1 } else { 2 };
+            ((*target).state, (*target).mirage_ttl, (*target).tcp_win)
+        }
+    }
 }
