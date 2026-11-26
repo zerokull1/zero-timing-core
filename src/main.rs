@@ -184,16 +184,27 @@ pub extern "C" fn main_entry() -> ! {
     let uri_v = unsafe { l7_shield::inspect_avx2_http_uri_32b(b"GET /index.html HTTP/1.1\r\nHost: a".as_ptr(), 32) };
     let mut ai_ddr = l1_ai_agent::AgentDdrMemory::new_seeded();
     let ai_feat = [4u8; 32];
-    let ai_v = unsafe { l1_ai_agent::l1_agent_step_avx2(ai_feat.as_ptr(), &mut ai_ddr, 0) };
-    let _ = (vmx, svm, quic_v, storm_v, uri_v, ai_v);
+    let (xsk_fd, umem_addr, rx_len, rx_verdict) = af_xdp_engine::run_live_xdp_zerocopy_rx(0, map_fd);
+    let l7_combined = (l7_verdict as u32) | (quic_v as u32) | (storm_v as u32) | (uri_v as u32);
+    let ctrl_bus = unsafe { ai_ddr.orchestrate_all(ai_feat.as_ptr(), l7_combined, rx_verdict as u32, rx_len as usize) };
+    let _ = (vmx, svm);
     let mut m_key = mutagenic_seal::MutagenicKey512::new([0x5A45_524F_5249_4E47; 8], 0xDEAD_BEEF_CAFE_BABE);
     let mut sealed_ddr = [0u64; 8];
     let mut trap_sink = 0u64;
     unsafe {
         m_key.seal_block_64b(&[1, 2, 3, 4, 5, 6, 7, 8], sealed_ddr.as_mut_ptr(), 12345);
-        let _ = m_key.verify_or_vaporize(0xDEAD_BEEF_CAFE_BABE, &mut trap_sink);
+        let seal_token = if ai_ddr.is_command_active(l1_ai_agent::CTRL_MUTAGEN_VAPORIZE) { 0 } else { 0xDEAD_BEEF_CAFE_BABE };
+        let _ = m_key.verify_or_vaporize(seal_token, &mut trap_sink);
     }
-    let (xsk_fd, umem_addr, rx_len, rx_verdict) = af_xdp_engine::run_live_xdp_zerocopy_rx(0, map_fd);
+    print_str("\n  6b. L1 Master Micro-AI Control Bus: ");
+    print_hex8(ctrl_bus as u8);
+    print_str(" (Stage0Shed=");
+    print_u64(ai_ddr.is_command_active(l1_ai_agent::CTRL_STAGE0_SHED) as u64);
+    print_str(", WXTrap=");
+    print_u64(ai_ddr.is_command_active(l1_ai_agent::CTRL_WX_TRAP_ARMED) as u64);
+    print_str(", GpuOffload=");
+    print_u64(ai_ddr.is_command_active(l1_ai_agent::CTRL_GPU_OFFLOAD) as u64);
+    print_str(")\n");
     print_str("  7. AF_XDP Zero-Copy UMEM Subsystem: ");
     if xsk_fd >= 0 {
         print_str("ONLINE (fd=");
