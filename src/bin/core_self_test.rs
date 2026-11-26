@@ -199,6 +199,15 @@ pub extern "C" fn test_main(argc: usize, argv: *const *const u8) -> ! {
         }
     }
 
+
+    if !zero_core_lib::l7_shield::inspect_php_proto_vector_swar(b"GET /core/install.php HTTP/1.1\r\n\r\n")
+        || !zero_core_lib::l7_shield::inspect_php_proto_vector_swar(b"Cookie: s=O:8:\"stdClass\":0:{}")
+        || !zero_core_lib::l7_shield::inspect_php_proto_vector_swar(b"GET /?f=phar://a.jpg HTTP/1.1\r\n\r\n")
+        || zero_core_lib::l7_shield::inspect_php_proto_vector_swar(b"POST /api/v1/items HTTP/1.1\r\n\r\n{\"id\":1}")
+    {
+        zero_core_lib::l7_shield::inspect_php_proto_vector_swar(b"");
+        panic!("PHP/CMS SWAR test failed");
+    }
     let ok_msg = b"[OK] cargo test (no_std / no_main): 128-bit TLS Downgrade, L7 ASM, SMP VM-Exit & EPT XO VERIFIED!\n";
     unsafe {
         sys_write(1, ok_msg.as_ptr(), ok_msg.len());

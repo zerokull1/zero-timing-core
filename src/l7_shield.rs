@@ -748,3 +748,53 @@ pub unsafe fn tcp_boundary_split_guard(dport: u16, tcp_flags: u8, l7_len: usize,
     }
     0
 }
+
+/// Root-Cause L7 SWAR Guard (endian-safe, #![no_std]):
+/// - Arbitrary-offset "/install.php" & "/update.php" (CVE-2026-136716 / CVE-2026-132165)
+/// - PHP Object Serialization "O:<digit>:" / "C:<digit>:" / "O%3A" / "C%3A" (CVE-2026-132166)
+/// - Stream wrapper "phar://"
+#[inline(always)]
+pub fn inspect_php_proto_vector_swar(buf: &[u8]) -> bool {
+    let len = buf.len();
+    if len < 6 {
+        return false;
+    }
+    let scan_lim = if len > 1024 { 1024 } else { len };
+    let mut hit: u32 = 0;
+    let mut i: usize = 0;
+    while i + 4 <= scan_lim {
+        let w = u32::from_le_bytes([buf[i], buf[i + 1], buf[i + 2], buf[i + 3]]);
+        let b0 = (w as u8) & 0xDF;
+        let b1 = (w >> 8) as u8;
+        let b2 = (w >> 16) as u8;
+        let is_oc = ((b0 == b'O') as u32) | ((b0 == b'C') as u32);
+        let is_colon = (b1 == b':') as u32;
+        let is_digit = (b2.wrapping_sub(b'0') <= 9) as u32;
+        hit |= is_oc & is_colon & is_digit;
+
+        let wu = w & 0xDFDFDFFF;
+        hit |= ((wu == 0x4133254F) as u32) | ((wu == 0x41332543) as u32);
+
+        let wl = w | 0x20202020;
+        if wl == 0x736E692F && i + 12 <= scan_lim {
+            let tail = u64::from_le_bytes([
+                buf[i + 4], buf[i + 5], buf[i + 6], buf[i + 7],
+                buf[i + 8], buf[i + 9], buf[i + 10], buf[i + 11],
+            ]);
+            hit |= ((tail | 0x2020200020202020) == 0x7068702E6C6C6174) as u32;
+        }
+        if wl == 0x6470752F && i + 11 <= scan_lim {
+            let tail = u64::from_le_bytes([
+                buf[i + 4], buf[i + 5], buf[i + 6], buf[i + 7],
+                buf[i + 8], buf[i + 9], buf[i + 10], 0,
+            ]);
+            hit |= ((tail | 0x0020202000202020) == 0x007068702E657461) as u32;
+        }
+        if wl == 0x72616870 && i + 7 <= scan_lim {
+            let sep = (buf[i + 4] as u32) | ((buf[i + 5] as u32) << 8) | ((buf[i + 6] as u32) << 16);
+            hit |= (sep == 0x002F2F3A) as u32;
+        }
+        i += 1;
+    }
+    hit != 0
+}

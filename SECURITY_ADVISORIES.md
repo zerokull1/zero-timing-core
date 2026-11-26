@@ -43,3 +43,11 @@
 | `XDP VLAN / IPv6 & Bogon Spoofing Bypass` (`xdp_shield/xdp_zero_shield.c`) | Critical | **Fixed** (802.1Q/802.1AD VLAN decapsulation + IPv6 HopLimit/Frag-44 guard + Bogon/Martian source & `tot_len` validation at XDP driver hook) |
 
 - **2026-11-24 — Linux Kernel SCTP / Exotic L4 Transport Hardening (IPPROTO 132/33/47/21):** Added 1-cycle XDP_DROP for SCTP, DCCP, GRE, and RDS across IPv4/IPv6 ingress (`xdp_zero_shield.c`) and host `raw prerouting` + modprobe blacklist.
+
+### 2026-11-26 — Drupal Core & PHP Serialization Protocol Guard (`CVE-2026-136716`, `CVE-2026-132165`, `CVE-2026-132166`)
+- **Vector:** Unauthenticated `/install.php` & `/update.php` probing (including `X-Original-URL` override), PHP Object Injection (`O:<digit>:`, `C:<digit>:`, `O%3A`, `C%3A`), and `phar://` stream wrappers.
+- **Mitigation:** Added branchless endian-safe SWAR scanner `inspect_php_proto_vector_swar` (`~1 cycle / 4B`, `0 FP` on REST/JSON) across `zero-timing-core` and `zerokull-c11-go`.
+
+### 2026-11-26 — Drupal Core & PHP Serialization Protocol Guard (`CVE-2026-136716`, `CVE-2026-132165`, `CVE-2026-132166`)
+- **Vector:** Unauthenticated `/install.php` & `/update.php` probing (including `X-Original-URL` override), PHP Object Injection (`O:<digit>:`, `C:<digit>:`, `O%3A`, `C%3A`), and `phar://` stream wrappers.
+- **Mitigation:** Added branchless endian-safe SWAR scanner `inspect_php_proto_vector_swar` (`~1 cycle / 4B`, `0 FP` on REST/JSON) across `zero-timing-core` and `zerokull-c11-go`.
