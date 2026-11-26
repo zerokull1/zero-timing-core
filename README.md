@@ -215,3 +215,7 @@ sudo sysctl -w net.ipv6.conf.eth1.disable_ipv6=1 && sudo ethtool -K eth1 gro off
 ## Engineering Roadmap
 See [ROADMAP.md](ROADMAP.md) ([Русская версия](ROADMAP.ru.md)) for Phase 1–4 milestones from 73-vector silicon hardening to `AF_XDP` Zero-Copy and SmartNIC offload.
 - **Linux Kernel Ring-0 DKMS Engine Hardening (`zero_timing_ring0`)**: Boots directly into `MODE=ENFORCE`, restricts `/proc/zero_timing_ring0` to `0600`, enforces `synchronize_rcu()` on unload, and blocks Land attacks (`saddr == daddr`), Zero-QUIC (`UDP/443,8443`), and `RFC 793` TCP flag/OOB anomalies in Ring 0 across **73 audited full-stack vectors**.
+
+## Universal Hardware-Adaptive GPFIFO + GPPut Fast-Path (26 Nov 2026)
+- **Hardware-Independent Ring Auto-Detector:** Dynamically discovers compatible compute ring/doorbell offsets via monotonic memory-page calibration (`Self-Test` verified) with automatic zero-dependency SWAR/CPU fallback on headless or non-GPU hosts.
+- **Zero-Syscall / Zero-Driver Pipelined Loop (`WIN=4`):** Eliminates per-dispatch driver submission overhead (`12.03 µs` vs `17.33 µs`, **1.44x throughput gain**, **83,094 ops/sec**).
