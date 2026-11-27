@@ -1,4 +1,4 @@
-// ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
+/// ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 #include "ddr_arena.h"
 #include "hw_pmc_profiler.h"
 #include <stdio.h>
@@ -16,14 +16,17 @@ static const uint8_t *soho_code = (const uint8_t[]){
     0x45, 0x31, 0xc0, 0x66, 0x81, 0xfa, 0x08, 0x39, 0x41, 0x0f, 0x47, 0xc8, 0x89, 0xc8, 0xc3
 };
 
-int main() {
+/* [МЕТКА 1: ЗАГРУЗКА МАШИННЫХ ОПКОДОВ В W^X-АРЕНУ И ЧТЕНИЕ АППАРАТНЫХ СЧЁТЧИКОВ PMU] */
+int main(void) {
     ddr_arena_t arena;
     if (ddr_arena_create(&arena) != 0) return 1;
     asm_mod_fn_t run_soho = (asm_mod_fn_t)ddr_arena_push_code(&arena, soho_code, 53);
-    if (!run_soho || ddr_arena_seal_wx(&arena) != 0) return 2;
+    if (!run_soho || ddr_arena_seal_wx(&arena) != 0) { ddr_arena_destroy(&arena); return 2; }
     run_soho = (asm_mod_fn_t)(arena.base + (size_t)run_soho);
 
     uint8_t *pkt = (uint8_t *)ddr_arena_alloc_data(&arena, 128, 64);
+    if (!pkt) { ddr_arena_destroy(&arena); return 3; }
+    /* [МЕТКА 2: ФОРМИРОВАНИЕ ТЕСТОВОГО КАДРА TLS CLIENTHELLO С МАЛЫМ ОКНОМ SOHO-ПРОКСИ] */
     *(pkt + 48) = 0x16; *(pkt + 49) = 0xd0; *(pkt + 54) = 0x16; *(pkt + 55) = 0x03;
 
     hw_pmc_handle_t pmc_cache, pmc_branch;
@@ -36,6 +39,7 @@ int main() {
     uint64_t bm0 = ok_b ? asm_rdpmc(pmc_branch.pmc_index) : 0;
     uint64_t c0 = __rdtscp(&aux), caught = 0;
 
+    /* [МЕТКА 3: ГОРЯЧИЙ ЦИКЛ 10 000 000 КАДРОВ ИЗ L1i-КЭША С КОНТРОЛЕМ ПРОМАХОВ КЭША И ВЕТВЛЕНИЙ] */
     for (int i = 0; i < 10000000; i++) caught += run_soho(pkt, 80);
 
     uint64_t c1 = __rdtscp(&aux);

@@ -7,30 +7,35 @@
 #include <sys/mman.h>
 #include <x86intrin.h>
 
+/* [МЕТКА 1: Безветвящийся инспектор 4 протоколов (HTTP/2, Modbus TCP, DNS, NTP) за 3-5 тактов] */
 __attribute__((noinline))
 static uint32_t inspect_proto_branchless(uint16_t dst_port, const uint8_t *p, size_t len) {
-    if (len < 8) return 1U;
+    if (!p || len < 8) return 1U;
     uint64_t q0 = 0, q1 = 0;
     memcpy(&q0, p, 8);
     if (len >= 16) memcpy(&q1, p + 8, 8);
 
     uint32_t drop = 0U, one = 1U;
+    /* [МЕТКА 2: HTTP/2 (TCP 443/8080) — отсечка RST_STREAM (0x03) и фреймов > 16 КБ (NGINX2Root)] */
     if (dst_port == 443U || dst_port == 8080U) {
         uint8_t ftype = (uint8_t)(q0 >> 24);
         uint32_t flen = ((uint32_t)(q0 & 0xFF) << 16) | ((uint32_t)((q0 >> 8) & 0xFF) << 8) | (uint32_t)((q0 >> 16) & 0xFF);
         __asm__ __volatile__("cmpb $0x03, %1\n\tcmovel %2, %0\n\tcmpl $16384, %3\n\tcmoval %2, %0\n\t"
                              : "+r"(drop) : "r"(ftype), "r"(one), "r"(flen) : "cc");
     }
+    /* [МЕТКА 3: АСУ ТП Modbus TCP (порт 502) — Protocol ID обязан быть строго 0x0000] */
     if (dst_port == 502U) {
         uint16_t proto_id = (uint16_t)(q0 >> 16);
         __asm__ __volatile__("testw %1, %1\n\tcmovnel %2, %0\n\t" : "+r"(drop) : "r"(proto_id), "r"(one) : "cc");
     }
+    /* [МЕТКА 4: DNS (UDP 53) — блокировка амплификации (QR=1 ответ) и туннелирования (метка > 63 Б)] */
     if (dst_port == 53U) {
         uint8_t flags_hi = (uint8_t)(q0 >> 16);
         uint8_t qname_len = (uint8_t)(q1 >> 32);
         __asm__ __volatile__("testb $0x80, %1\n\tcmovnel %2, %0\n\tcmpb $63, %3\n\tcmoval %2, %0\n\t"
                              : "+r"(drop) : "r"(flags_hi), "r"(one), "r"(qname_len) : "cc");
     }
+    /* [МЕТКА 5: NTP (UDP 123) — блокировка DDoS-усиления monlist (Mode 6 и Mode 7)] */
     if (dst_port == 123U) {
         uint8_t mode = (uint8_t)(q0 & 0x07ULL);
         __asm__ __volatile__("cmpb $6, %1\n\tcmovael %2, %0\n\t" : "+r"(drop) : "r"(mode), "r"(one) : "cc");
@@ -39,9 +44,10 @@ static uint32_t inspect_proto_branchless(uint16_t dst_port, const uint8_t *p, si
 }
 
 int main(void) {
+    /* [МЕТКА 6: Выделение 2 страниц и установка аппаратной ловушки PROT_NONE на второй странице] */
     uint8_t *pages = mmap(NULL, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (pages == MAP_FAILED) return 1;
-    if (mprotect(pages + 4096, 4096, PROT_NONE) != 0) return 2;
+    if (mprotect(pages + 4096, 4096, PROT_NONE) != 0) { munmap(pages, 8192); return 2; }
 
     const uint16_t *ports = (const uint16_t[]){ 443, 502, 53, 123, 8080 };
     uint64_t blocked = 0, passed = 0;

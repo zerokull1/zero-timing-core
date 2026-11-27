@@ -13,12 +13,14 @@ typedef struct __attribute__((aligned(64))) {
 } stateful_slot_t;
 
 // Уровень 1 (Stateless Gate): чистый расчёт в регистрах CPU, 0 обращений к DDR
+/* [МЕТКА 1: УРОВЕНЬ 1 — БЫСТРЫЙ ОТСЕВ МУСОРА В РЕГИСТРАХ CPU (0 ОБРАЩЕНИЙ К ПАМЯТИ DDR)] */
 static inline uint64_t stateless_gate_check(uint64_t hdr_word, uint64_t reg_magic) {
     uint64_t h = _mm_crc32_u64(reg_magic, hdr_word);
     return ((h & 0xFFFFULL) == 0x5A45ULL) ? 1ULL : 0ULL;
 }
 
 // Уровень 2 (Stateful DDR Salt): вход в выровненный 64B слот DDR только после прохождения Уровня 1
+/* [МЕТКА 2: УРОВЕНЬ 2 — ПРОВЕРКА ПОТОКА В ВЫРОВНЕННОМ 64B СЛОТЕ DDR ТОЛЬКО ПОСЛЕ УРОВНЯ 1] */
 static inline uint64_t stateful_ddr_lookup(stateful_slot_t *tbl, uint64_t flow_id, uint64_t tag) {
     uint64_t idx = _mm_crc32_u64(0x1337ULL, flow_id) & 1023ULL;
     stateful_slot_t *slot = tbl + idx;
@@ -32,7 +34,7 @@ int main(void) {
     ddr_arena_t arena;
     if (ddr_arena_create(&arena) != 0) return 1;
     stateful_slot_t *tbl = (stateful_slot_t *)ddr_arena_alloc_data(&arena, 1024 * sizeof(stateful_slot_t), 64);
-    if (!tbl) return 2;
+    if (!tbl) { ddr_arena_destroy(&arena); return 2; }
 
     uint64_t reg_magic = 0x494E414D4F52455AULL;
     uint64_t valid_hdr = 0;

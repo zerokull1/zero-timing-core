@@ -13,6 +13,7 @@ typedef struct __attribute__((aligned(64))) {
 } tcp_flow_guard_t;
 
 // Возврат: 0 = CLEAN PASS, 1 = OVERLAP EVASION DROP, 2 = TTL ANOMALY DROP
+/* [МЕТКА 1: КОНТРОЛЬ ПОСЛЕДОВАТЕЛЬНОСТИ TCP SEQ И АНОМАЛИЙ TTL БЕЗ БУФЕРИЗАЦИИ СТРИМА] */
 static inline uint32_t inspect_tcp_ttl_guard(tcp_flow_guard_t *f, uint32_t seq, uint32_t len, uint8_t ttl) {
     if (!f->active) {
         if (ttl < 16U) return 2U; // Попытка стартовать сессию с умирающим TTL-приманкой
@@ -32,7 +33,7 @@ int main(void) {
     ddr_arena_t arena;
     if (ddr_arena_create(&arena) != 0) return 1;
     tcp_flow_guard_t *flow = (tcp_flow_guard_t *)ddr_arena_alloc_data(&arena, sizeof(tcp_flow_guard_t), 64);
-    if (!flow) return 2;
+    if (!flow) { ddr_arena_destroy(&arena); return 2; }
 
     uint64_t clean_ok = 0, overlap_drops = 0, ttl_drops = 0;
     uint32_t cur_seq = 10000U;
@@ -41,6 +42,7 @@ int main(void) {
     clock_gettime(CLOCK_MONOTONIC, &ts0);
     uint64_t c0 = __rdtscp(&aux);
 
+    /* [МЕТКА 2: СТРЕСС-ПРОГОН 10 000 000 КАДРОВ (ЧИСТЫЙ ПОТОК + ПЕРЕКРЫТИЕ SEQ + ПОДМЕНА TTL)] */
     for (uint64_t i = 0; i < 10000000ULL; i++) {
         uint64_t mode = i & 3ULL;
         uint32_t seq = cur_seq;

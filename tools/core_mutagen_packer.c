@@ -1,3 +1,4 @@
+// ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdint.h>
@@ -7,22 +8,25 @@
 #include <unistd.h>
 #include <x86intrin.h>
 
-#define ZEROMANI_MAGIC 0x494E414D4F52455AULL
+#define ZEROMANI_MAGIC      0x494E414D4F52455AULL
+#define MAX_CAPSULE_PAYLOAD (64ULL * 1024ULL * 1024ULL) /* Жёсткий потолок размера капсулы 64 МБ против OOM DoS */
 
+/* [МЕТКА 1: Заголовок зашифрованной капсулы ядра (40 байт)] */
 typedef struct __attribute__((packed)) {
-    uint64_t magic;       // "ZEROMANI"
-    uint64_t version;     // 1
-    uint64_t payload_len; // размер зашифрованного ядра
-    uint64_t nonce;       // аппаратная соль (TSC + urandom)
-    uint64_t mac;         // контрольная сумма целостности
+    uint64_t magic;       /* Авторская подпись "ZEROMANI" */
+    uint64_t version;     /* Версия формата капсулы (1) */
+    uint64_t payload_len; /* Точный размер зашифрованного бинарного ядра в байтах */
+    uint64_t nonce;       /* Одноразовая аппаратная соль (RDTSC + /dev/urandom) */
+    uint64_t mac;         /* Контрольный код целостности MAC */
 } capsule_hdr_t;
 
 static inline uint64_t rotl64(uint64_t x, int k) {
     return (x << k) | (x >> (64 - k));
 }
 
-// Мутагенный потоковый генератор гаммы (ARX + нелинейная мутация состояния на каждом шаге)
+/* [МЕТКА 2: Мутагенный потоковый шифратор ARX с нелинейной перестройкой состояния] */
 static void mutagen_xor_stream(uint8_t *buf, size_t len, const uint64_t *key, uint64_t nonce) {
+    if (!buf || !key || len == 0) return;
     uint64_t s0 = *(key + 0) ^ nonce;
     uint64_t s1 = *(key + 1) ^ rotl64(nonce, 17);
     uint64_t s2 = *(key + 2) ^ rotl64(nonce, 33);
@@ -52,6 +56,7 @@ static void mutagen_xor_stream(uint8_t *buf, size_t len, const uint64_t *key, ui
     }
 }
 
+/* [МЕТКА 3: Вычисление контрольного кода целостности MAC по ключу эпохи и соли] */
 static uint64_t compute_mac(const uint8_t *buf, size_t len, const uint64_t *key, uint64_t nonce) {
     uint64_t h = 0xCBF29CE484222325ULL ^ nonce ^ *(key + 0) ^ *(key + 3);
     for (size_t i = 0; i < len; i++) {
@@ -72,22 +77,34 @@ int main(int argc, char **argv) {
     const char *cap_path = *(argv + 3);
     const char *key_path = *(argv + 4);
 
+    /* [МЕТКА 4: Режим упаковки и шифрования ядра в подписанную капсулу (enc)] */
     if (mode == 'e') {
         FILE *fi = fopen(in_path, "rb");
         if (!fi) { perror("fopen input"); return 1; }
-        fseek(fi, 0, SEEK_END);
+        if (fseek(fi, 0, SEEK_END) != 0) { fclose(fi); return 1; }
         long fsz = ftell(fi);
-        fseek(fi, 0, SEEK_SET);
-        if (fsz <= 0) { fclose(fi); return 1; }
+        if (fsz <= 0 || (uint64_t)fsz > MAX_CAPSULE_PAYLOAD || fseek(fi, 0, SEEK_SET) != 0) {
+            fclose(fi); return 1;
+        }
 
         size_t len = (size_t)fsz;
         uint8_t *data = malloc(len);
-        if (!data || fread(data, 1, len, fi) != len) { perror("fread"); return 1; }
+        if (!data) { fclose(fi); return 1; }
+        if (fread(data, 1, len, fi) != len) {
+            explicit_bzero(data, len); free(data); fclose(fi); return 1;
+        }
         fclose(fi);
 
+        /* [МЕТКА 5: Генерация 256-битного ключа и соли из /dev/urandom + RDTSC] */
         uint64_t *key = calloc(4, sizeof(uint64_t));
-        int ur = open("/dev/urandom", O_RDONLY);
-        if (ur < 0 || read(ur, key, 32) != 32) { perror("urandom"); return 1; }
+        if (!key) { explicit_bzero(data, len); free(data); return 1; }
+        int ur = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+        if (ur < 0 || read(ur, key, 32) != 32) {
+            if (ur >= 0) close(ur);
+            explicit_bzero(key, 32); free(key);
+            explicit_bzero(data, len); free(data);
+            return 1;
+        }
         uint64_t nonce = __rdtsc();
         uint64_t extra = 0;
         if (read(ur, &extra, 8) == 8) nonce ^= extra;
@@ -105,53 +122,82 @@ int main(int argc, char **argv) {
         };
 
         FILE *fc = fopen(cap_path, "wb");
-        if (!fc) { perror("fopen capsule"); return 1; }
-        fwrite(&hdr, sizeof(hdr), 1, fc);
-        fwrite(data, 1, len, fc);
+        if (!fc) {
+            explicit_bzero(key, 32); free(key);
+            explicit_bzero(data, len); free(data);
+            return 1;
+        }
+        int w_ok = (fwrite(&hdr, sizeof(hdr), 1, fc) == 1 && fwrite(data, 1, len, fc) == len);
         fclose(fc);
 
-        int kfd = open(key_path, O_CREAT | O_WRONLY | O_TRUNC, 0600);
-        if (kfd < 0 || write(kfd, key, 32) != 32) { perror("write key"); return 1; }
+        /* [МЕТКА 6: Сохранение 256-битного ключа со строгими правами 0600 и затирание RAM (explicit_bzero)] */
+        int kfd = open(key_path, O_CREAT | O_WRONLY | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0600);
+        if (!w_ok || kfd < 0 || write(kfd, key, 32) != 32) {
+            if (kfd >= 0) close(kfd);
+            explicit_bzero(key, 32); free(key);
+            explicit_bzero(data, len); free(data);
+            return 1;
+        }
         close(kfd);
 
-        memset(data, 0, len);
-        memset(key, 0, 32);
-        free(data);
-        free(key);
+        explicit_bzero(data, len); free(data);
+        explicit_bzero(key, 32); free(key);
 
         printf("[МУТАГЕН-ШИФРАТОР] Ядро упаковано в %s (%zu байт) + 256-бит ключ %s\n",
                cap_path, len + sizeof(hdr), key_path);
-    } else if (mode == 'v') {
+        return 0;
+    }
+
+    /* [МЕТКА 7: Режим верификации и расшифровки капсулы в RAM с контролем MAC (verify)] */
+    if (mode == 'v') {
         uint64_t *key = calloc(4, sizeof(uint64_t));
+        if (!key) return 1;
         FILE *fk = fopen(key_path, "rb");
-        if (!fk || fread(key, 1, 32, fk) != 32) { perror("read key"); return 1; }
+        if (!fk) { free(key); return 1; }
+        if (fread(key, 1, 32, fk) != 32) {
+            explicit_bzero(key, 32); free(key); fclose(fk); return 1;
+        }
         fclose(fk);
 
         FILE *fc = fopen(cap_path, "rb");
-        if (!fc) { perror("fopen capsule"); return 1; }
+        if (!fc) { explicit_bzero(key, 32); free(key); return 1; }
         capsule_hdr_t hdr;
-        if (fread(&hdr, sizeof(hdr), 1, fc) != 1 || hdr.magic != ZEROMANI_MAGIC) {
-            fprintf(stderr, "Ошибка: неверная авторская метка капсулы!\n");
+        if (fread(&hdr, sizeof(hdr), 1, fc) != 1 || hdr.magic != ZEROMANI_MAGIC ||
+            hdr.payload_len == 0 || hdr.payload_len > MAX_CAPSULE_PAYLOAD) {
+            fprintf(stderr, "Ошибка: неверная авторская метка или размер капсулы!\n");
+            explicit_bzero(key, 32); free(key); fclose(fc);
             return 1;
         }
-        uint8_t *data = malloc(hdr.payload_len);
-        if (!data || fread(data, 1, hdr.payload_len, fc) != hdr.payload_len) { perror("fread cap"); return 1; }
+
+        size_t plen = (size_t)hdr.payload_len;
+        uint8_t *data = malloc(plen);
+        if (!data) { explicit_bzero(key, 32); free(key); fclose(fc); return 1; }
+        if (fread(data, 1, plen, fc) != plen) {
+            explicit_bzero(data, plen); free(data);
+            explicit_bzero(key, 32); free(key); fclose(fc);
+            return 1;
+        }
         fclose(fc);
 
-        mutagen_xor_stream(data, hdr.payload_len, key, hdr.nonce);
-        uint64_t check_mac = compute_mac(data, hdr.payload_len, key, hdr.nonce);
-        if (check_mac != hdr.mac) {
+        mutagen_xor_stream(data, plen, key, hdr.nonce);
+        uint64_t check_mac = compute_mac(data, plen, key, hdr.nonce);
+        uint64_t diff = check_mac ^ hdr.mac;
+        __asm__ __volatile__("" : "+r"(diff) :: "memory");
+
+        /* При любом несовпадении MAC немедленно выжигаем расшифрованные байты в RAM */
+        explicit_bzero(data, plen); free(data);
+        explicit_bzero(key, 32); free(key);
+
+        if (diff != 0ULL) {
             fprintf(stderr, "ТРЕВОГА: нарушена целостность ядра (MAC mismatch)!\n");
             return 1;
         }
 
         printf("[ПРОВЕРКА КАПСУЛЫ] Метка: %.8s | Расшифровано в RAM: %llu байт | Целостность MAC: ОК (0x%016llx)\n",
                (char *)&hdr.magic, (unsigned long long)hdr.payload_len, (unsigned long long)check_mac);
-
-        memset(data, 0, hdr.payload_len);
-        memset(key, 0, 32);
-        free(data);
-        free(key);
+        return 0;
     }
-    return 0;
+
+    fprintf(stderr, "Ошибка: неизвестный режим '%c'\n", mode);
+    return 1;
 }

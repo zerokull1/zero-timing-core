@@ -12,7 +12,7 @@
 typedef struct __attribute__((aligned(64))) {
     _Atomic uint64_t head_canary;
     uint64_t payload_rule;
-    uint64_t epoch_secret;
+    _Atomic uint64_t epoch_secret;
     _Atomic uint64_t tail_canary;
 } guarded_ddr_block_t;
 
@@ -39,7 +39,7 @@ static void *canary_worker(void *arg) {
         uint64_t t = atomic_load_explicit(&ctx->blk->tail_canary, memory_order_acquire);
         if (h != CANARY_HEAD || t != CANARY_TAIL) {
             atomic_store_explicit(ctx->fail_close, 1U, memory_order_seq_cst);
-            explicit_bzero(&ctx->blk->epoch_secret, sizeof(uint64_t));
+            atomic_store_explicit(&ctx->blk->epoch_secret, 0ULL, memory_order_seq_cst);
             ctx->blocked_fail_close++;
         } else {
             ctx->passed_before_trip++;
@@ -52,16 +52,18 @@ int main(void) {
     ddr_arena_t arena;
     if (ddr_arena_create(&arena) != 0) return 1;
     guarded_ddr_block_t *blk = (guarded_ddr_block_t *)ddr_arena_alloc_data(&arena, sizeof(guarded_ddr_block_t), 64);
-    if (!blk) return 2;
+    if (!blk) { ddr_arena_destroy(&arena); return 2; }
 
     atomic_init(&blk->head_canary, CANARY_HEAD);
     atomic_init(&blk->tail_canary, CANARY_TAIL);
     blk->payload_rule = 0x1122334455667788ULL;
-    blk->epoch_secret = 0xCAFEBABEDEADBEEFULL;
+    atomic_init(&blk->epoch_secret, 0xCAFEBABEDEADBEEFULL);
 
     _Atomic uint32_t fail_close = 0U;
-    pthread_t *tids = (pthread_t *)ddr_arena_alloc_data(&arena, 4 * sizeof(pthread_t), 64);
+    /* [МЕТКА: Дескрипторы потоков pthread_t держим на стеке main, чтобы TLS-очистка glibc не обращалась в unmap-арену] */
+    pthread_t tids[4];
     worker_ctx_t *ctxs = (worker_ctx_t *)ddr_arena_alloc_data(&arena, 4 * sizeof(worker_ctx_t), 64);
+    if (!ctxs) { ddr_arena_destroy(&arena); return 2; }
 
     for (int t = 0; t < 4; t++) {
         (ctxs + t)->blk = blk;
@@ -78,10 +80,12 @@ int main(void) {
 
     printf("=== ТЕСТ №6: МНОГОПОТОЧНАЯ ГОНКА CANARY-ЛОВУШКИ И FAIL-CLOSE В DDR ===\n");
     printf("Состояние защёлки Fail-Close : %s (tripped=%u)\n", fail_close ? "СРАБОТАЛА МГНОВЕННО" : "ОШИБКА", fail_close);
-    printf("Секрет эпохи после тревоги   : 0x%llx (0 = затёрт в ноль)\n", (unsigned long long)blk->epoch_secret);
+    printf("Секрет эпохи после тревоги   : 0x%llx (0 = затёрт в ноль)\n", (unsigned long long)atomic_load_explicit(&blk->epoch_secret, memory_order_acquire));
     printf("Кадров до порчи / в Fail-Close: %llu пропущено | %llu заблокировано (0 утечек)\n",
            (unsigned long long)tot_pass, (unsigned long long)tot_fc);
 
+    /* [МЕТКА: Фиксируем значение секрета из арены ДО её уничтожения (защита от Use-After-Unmap)] */
+    uint64_t secret_after = atomic_load_explicit(&blk->epoch_secret, memory_order_acquire);
     ddr_arena_destroy(&arena);
-    return (fail_close == 1U && blk->epoch_secret == 0ULL && tot_fc > 0ULL) ? 0 : 3;
+    return (fail_close == 1U && secret_after == 0ULL && tot_fc > 0ULL) ? 0 : 4;
 }
