@@ -4,6 +4,7 @@
 
 | ID / Вектор | Суть угрозы | Уровень перекрытия | Статус |
 | :--- | :--- | :--- | :--- |
+| **CVE-2026-133469** | Vates Xen Orchestra / CISA KEV (25.11.2026) | Empty JSON token (`{}` / `%7b%7d`) auth bypass in HTTP headers | Mitigated via branchless 64-bit SWAR header scanner (`zk_check_empty_json_token_swar`) |
 | **CVE-2026-98432** (Nov 2026) | Гонка `TCP SYN` с IPv4 Options (`Record Route` / `Timestamp`) и вектором `MPTCP` (Use-After-Free) | Netfilter `raw prerouting` (`ip hdrlength != 5 drop`) + отключение `net.mptcp.enabled = 0` | **Mitigated** |
 | **NoisyTCP** (Nov 2026) | Kernel Panic в TCP-стеке Linux при аномальных комбинациях флагов | Ядро `7.3.4-zen2-2` + ранняя отсечка Null/Xmas/`SYN+FIN`/`SYN+RST`/`FIN+RST` до `conntrack` | **Mitigated** |
 | **CVE-2026-114938** (Java4Shell, CVSS 9.2) | Pre-Auth RCE в декодере Base64 OpenJDK на CPU с AVX-512 VBMI | Чистый `#![no_std]` Rust/ASM стек без JVM и сторонних зависимостей | **Not Affected** |
