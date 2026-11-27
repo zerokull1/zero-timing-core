@@ -63,9 +63,18 @@ int xdp_zero_shield_prog(struct xdp_md *ctx) {
     for (int i = 0; i < 2; i++) {
         if (h_proto == bpf_htons(ETH_P_8021Q) || h_proto == bpf_htons(ETH_P_8021AD)) {
             if (nh + 4 > data_end) return XDP_PASS;
+            __u16 tci = bpf_ntohs(*(__be16 *)nh);
+            if ((tci & 0x0FFF) == 0) {
+                st->dropped_null_tcp++;
+                return XDP_DROP;
+            }
             h_proto = *(__be16 *)(nh + 2);
             nh += 4;
         }
+    }
+    if (h_proto == bpf_htons(ETH_P_8021Q) || h_proto == bpf_htons(ETH_P_8021AD)) {
+        st->dropped_null_tcp++;
+        return XDP_DROP;
     }
 
     if (h_proto == bpf_htons(ETH_P_IPV6)) {

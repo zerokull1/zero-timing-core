@@ -250,8 +250,8 @@ pub extern "efiapi" fn efi_main(image_handle: EfiHandle, system_table: *const Ef
         }
         if !exited { return last_st; }
 
-        let null_idt = IdtDescriptor { limit: 0, base: 0 };
-        asm!("cli", "lidt [{}]", in(reg) &null_idt, options(nostack));
+        static NULL_IDT: IdtDescriptor = IdtDescriptor { limit: 0, base: 0 };
+        asm!("cli", "lidt [{}]", in(reg) &raw const NULL_IDT, options(nostack, readonly));
         for b in mmap_buf.iter_mut() { core::ptr::write_volatile(b, 0); }
 
         serial_write_bytes(b"==============================================================\r\n");
@@ -304,6 +304,7 @@ pub extern "efiapi" fn efi_main(image_handle: EfiHandle, system_table: *const Ef
             }
             serial_write_bytes(b"\r\n");
             let tx_st = pci_nic::tx_send_frame(bar0, mac);
+            pci_nic::quiesce_intel_nic(bar0);
             serial_write_bytes(b"[TX-DMA] MMIO Doorbell Fired | Descriptor Status: ");
             serial_write_hex8(tx_st);
             serial_write_bytes(b" (DD=1 Sent to Wire!)\r\n");

@@ -77,7 +77,13 @@ pub struct TxDesc {
     pub special: u16,
 }
 
-static mut TX_RING: [TxDesc; 8] = [TxDesc {
+#[repr(C, align(128))]
+struct AlignedTxRing([TxDesc; 8]);
+
+#[repr(C, align(64))]
+struct AlignedTxPkt([u8; 64]);
+
+static mut TX_RING: AlignedTxRing = AlignedTxRing([TxDesc {
     addr: 0,
     length: 0,
     cso: 0,
@@ -85,11 +91,17 @@ static mut TX_RING: [TxDesc; 8] = [TxDesc {
     status: 0,
     css: 0,
     special: 0,
-}; 8];
-static mut TX_PKT: [u8; 64] = [0u8; 64];
+}; 8]);
+static mut TX_PKT: AlignedTxPkt = AlignedTxPkt([0u8; 64]);
+
+pub unsafe fn quiesce_intel_nic(bar0: usize) {
+    write_volatile((bar0 + 0x0100) as *mut u32, 0); // RCTL disable
+    write_volatile((bar0 + 0x0400) as *mut u32, 0); // TCTL disable
+    fence(Ordering::SeqCst);
+}
 
 pub unsafe fn tx_send_frame(bar0: usize, mac: [u8; 6]) -> u8 {
-    let pkt_ptr = (&raw mut TX_PKT).cast::<u8>();
+    let pkt_ptr = (&raw mut TX_PKT.0).cast::<u8>();
     for i in 0..6 {
         write_volatile(pkt_ptr.add(i), 0xFF);
         write_volatile(pkt_ptr.add(6 + i), mac[i]);
@@ -102,7 +114,7 @@ pub unsafe fn tx_send_frame(bar0: usize, mac: [u8; 6]) -> u8 {
         write_volatile(pkt_ptr.add(14 + i), magic[i]);
     }
 
-    let ring_addr = (&raw const TX_RING).cast::<TxDesc>() as u64;
+    let ring_addr = (&raw const TX_RING.0).cast::<TxDesc>() as u64;
     write_volatile((bar0 + 0x3800) as *mut u32, (ring_addr & 0xFFFF_FFFF) as u32); // TDBAL
     write_volatile((bar0 + 0x3804) as *mut u32, (ring_addr >> 32) as u32);        // TDBAH
     write_volatile((bar0 + 0x3808) as *mut u32, (8 * 16) as u32);                 // TDLEN
@@ -110,7 +122,7 @@ pub unsafe fn tx_send_frame(bar0: usize, mac: [u8; 6]) -> u8 {
     write_volatile((bar0 + 0x3818) as *mut u32, 0);                               // TDT
     write_volatile((bar0 + 0x0400) as *mut u32, (1 << 1) | (1 << 3));             // TCTL EN + PSP
 
-    let desc0 = (&raw mut TX_RING).cast::<TxDesc>();
+    let desc0 = (&raw mut TX_RING.0).cast::<TxDesc>();
     write_volatile(&raw mut (*desc0).addr, pkt_ptr as u64);
     write_volatile(&raw mut (*desc0).length, 64);
     write_volatile(&raw mut (*desc0).cmd, (1 << 0) | (1 << 1) | (1 << 3)); // EOP | IFCS | RS
