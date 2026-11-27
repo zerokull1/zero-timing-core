@@ -142,6 +142,8 @@ $ taskset -c 0 perf stat -e cycles,instructions,branch-misses ./poc_veth_l7
 ```
 
 
+- **Cross-Layer 64B HTTP & WireGuard Index/Nonce Gate (27 Nov 2026):** Enforces >=64B initial cleartext HTTP L7 framing (blocking 64B -> 2x32B boundary splits) and stateful WireGuard handshake/data binding (`148B Initiation <-> 92B Response -> >=64B 16B-aligned Transport Data` with `cli_idx`/`srv_idx` & monotonic 64-bit `Counter` window) in 503B L1i.
+
 ## Лицензия / License
 
 Проект распространяется под лицензией **GNU Affero General Public License v3.0 (AGPL-3.0)** — см. [`LICENSE`](LICENSE). Любое сетевое или облачное использование модифицированных версий требует публикации исходного кода.
