@@ -1,3 +1,4 @@
+#![allow(clippy::missing_safety_doc)]
 // ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 #![no_std]
 #![deny(unsafe_op_in_unsafe_fn)]
