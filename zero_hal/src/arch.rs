@@ -98,7 +98,7 @@ pub unsafe fn sys_mmap_anon_or_fd(addr: usize, len: usize, prot: u64, flags: u64
         #[repr(C)]
         struct S390Mmap { addr: u64, len: u64, prot: u64, flags: u64, fd: u64, offset: u64 }
         let args = S390Mmap { addr: addr as u64, len: len as u64, prot, flags, fd: fd as u64, offset: offset as u64 };
-        syscall1(sysno::SYS_MMAP, (&args as *const S390Mmap) as u64)
+        syscall1(sysno::SYS_MMAP, core::hint::black_box(&args as *const S390Mmap) as u64)
     }
     #[cfg(not(target_arch = "s390x"))]
     { syscall6(sysno::SYS_MMAP, addr as u64, len as u64, prot, flags, fd as u64, offset as u64) }

@@ -120,7 +120,7 @@ pub unsafe fn invept_all_contexts() { unsafe {
     asm!(
         "invept {t}, [{d}]",
         t = in(reg) inv_type,
-        d = in(reg) desc.as_ptr(),
+        d = in(reg) core::hint::black_box(desc.as_ptr()),
         options(nostack)
     );
 }}
@@ -242,7 +242,7 @@ pub unsafe fn arm_rack_core_ring_minus_1(ctx: &mut PerCoreRackContext) -> Result
 
             let phys_addr = (&ctx.vmxon_or_hsave as *const HypervisorControlRegion) as u64;
             let cf_err: u8;
-            asm!("vmxon [{addr}]", "setc {err}", addr = in(reg) &phys_addr, err = out(reg_byte) cf_err, options(nostack));
+            asm!("vmxon [{addr}]", "setc {err}", addr = in(reg) core::hint::black_box(&phys_addr), err = out(reg_byte) cf_err, options(nostack));
             if cf_err != 0 { return Err(2); }
 
             ctx.backend = HypervisorBackend::IntelVtxEpt;
@@ -292,7 +292,7 @@ pub unsafe fn enter_vmx_root_ring_minus_1(vmxon_region: &mut HypervisorControlRe
 
     let phys_addr = (vmxon_region as *const HypervisorControlRegion) as u64;
     let cf_err: u8;
-    asm!("vmxon [{addr}]", "setc {err}", addr = in(reg) &phys_addr, err = out(reg_byte) cf_err, options(nostack));
+    asm!("vmxon [{addr}]", "setc {err}", addr = in(reg) core::hint::black_box(&phys_addr), err = out(reg_byte) cf_err, options(nostack));
     if cf_err != 0 { return Err(2); }
     Ok(rev_id)
 }}
@@ -311,7 +311,7 @@ pub unsafe fn activate_intel_vmcs(ctx: &mut PerCoreRackContext) -> Result<(), u3
         "vmptrld [{addr}]",
         "setbe {err}",
         "2:",
-        addr = in(reg) &phys_addr,
+        addr = in(reg) core::hint::black_box(&phys_addr),
         err = out(reg_byte) err_flags,
         options(nostack)
     );

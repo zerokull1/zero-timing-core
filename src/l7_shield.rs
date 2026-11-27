@@ -143,7 +143,7 @@ pub fn benchmark_l7_swar() -> (u64, u8) {
 pub unsafe fn inspect_quic_l7_asm(payload_ptr: *const u8, len: usize) -> u64 { unsafe {
     if len == 0 || payload_ptr.is_null() { return 4; }
     let first_byte = *payload_ptr;
-    (((first_byte & 0x80) != 0) as u64) << 2
+    ((((first_byte & 0x80) != 0) | ((first_byte & 0xC0) == 0x40)) as u64) << 2
 }}
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
@@ -274,7 +274,7 @@ pub unsafe fn inspect_ethercat_asm(payload: *const u8, len: usize) -> u64 { unsa
     #[cfg(not(target_arch = "x86_64"))]
     {
         let b = core::slice::from_raw_parts(payload, 2);
-        let hdr = u16::from_le_bytes([b, b]);
+        let hdr = u16::from_le_bytes([b[0], b[1]]);
         let etype = (hdr >> 12) & 0x0F;
         let elen = (hdr & 0x07FF) as usize;
         if etype != 1 || elen < 12 || (elen + 2) > len { VERDICT_ETHERCAT_BLOCK } else { 0 }
@@ -303,8 +303,8 @@ pub unsafe fn inspect_dns_guard_asm(payload: *const u8, len: usize) -> u64 { uns
     #[cfg(not(target_arch = "x86_64"))]
     {
         let b = core::slice::from_raw_parts(payload, 13);
-        let flags_le = u16::from_le_bytes([b, b]);
-        let qname_len = b;
+        let flags_le = u16::from_le_bytes([b[2], b[3]]);
+        let qname_len = b[12];
         if (flags_le & 0x0082) != 0 || qname_len > 63 { VERDICT_DNS_BLOCK } else { 0 }
     }
 }}
@@ -338,12 +338,6 @@ pub const VERDICT_RMM_SOHO_BLOCK: u64 = 0x14;
 #[inline(always)]
 pub unsafe fn inspect_rmm_soho_window_asm(payload: *const u8, len: usize, tcp_window: u16) -> u64 { unsafe {
     if payload.is_null() || len < 6 {
-        return if tcp_window < 64 { VERDICT_RMM_SOHO_BLOCK } else { 0 };
-    }
-    if len == 0 || payload.is_null() {
-        return 0;
-    }
-    if len < 6 {
         return if tcp_window < 64 { VERDICT_RMM_SOHO_BLOCK } else { 0 };
     }
 

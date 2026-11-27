@@ -19,13 +19,24 @@ pub mod work_stealer;
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn memcpy(dst: *mut core::ffi::c_void, src: *const core::ffi::c_void, count: usize) -> *mut core::ffi::c_void {
     unsafe {
+        #[cfg(target_arch = "x86_64")]
         core::arch::asm!(
+            "cld",
             "rep movsb",
             inout("rdi") dst => _,
             inout("rsi") src => _,
             inout("rcx") count => _,
             options(nostack)
         );
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            let (d, s) = (dst as *mut u8, src as *const u8);
+            let mut i = 0usize;
+            while i < count {
+                *d.add(i) = *s.add(i);
+                i += 1;
+            }
+        }
     }
     dst
 }
@@ -33,13 +44,24 @@ pub unsafe extern "C" fn memcpy(dst: *mut core::ffi::c_void, src: *const core::f
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn memset(dst: *mut core::ffi::c_void, val: i32, count: usize) -> *mut core::ffi::c_void {
     unsafe {
+        #[cfg(target_arch = "x86_64")]
         core::arch::asm!(
+            "cld",
             "rep stosb",
             inout("rdi") dst => _,
             in("al") val as u8,
             inout("rcx") count => _,
             options(nostack)
         );
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            let d = dst as *mut u8;
+            let mut i = 0usize;
+            while i < count {
+                *d.add(i) = val as u8;
+                i += 1;
+            }
+        }
     }
     dst
 }

@@ -7,7 +7,9 @@ use crate::topology_placer::{sys_mmap_anon, sys_munmap_anon, ImpulseSlot};
 
 #[cfg(target_arch = "x86_64")]
 const SYS_MUNLOCK: usize = 150;
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(target_arch = "s390x")]
+const SYS_MUNLOCK: usize = 151;
+#[cfg(not(any(target_arch = "x86_64", target_arch = "s390x")))]
 const SYS_MUNLOCK: usize = 229;
 
 pub struct SealedHotPerimeter {
