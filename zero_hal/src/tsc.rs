@@ -152,4 +152,15 @@ impl HardwarePulseAnchor {
         }
         true
     }
+
+    /// Deterministic Xorshift64* phase jitter (0.15..0.85 ms = 150_000..850_000 ns)
+    /// to eliminate bus/network periodic phase locking without FPU.
+    #[inline(always)]
+    pub fn phase_jitter_ns(entropy: u64) -> u64 {
+        let mut x = entropy ^ 0x9E37_79B9_7F4A_7C15;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        150_000 + (x % 700_001)
+    }
 }
