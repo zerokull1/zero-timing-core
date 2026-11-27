@@ -193,3 +193,7 @@ sudo sysctl -w net.ipv6.conf.eth1.disable_ipv6=1 && sudo ethtool -K eth1 gro off
 
 ### SWAR-защита от CMS и PHP Object Injection (ноябрь 2026)
 - **Безветвящийся протокольный оракул:** детектирует неаутентифицированные маршруты CMS (`/install.php`, `/update.php`, подмену `X-Original-URL`), PHP Object Injection (`O:<digit>:`, `C:<digit>:`, URL-кодированные `O%3A` / `C%3A` через регистровую маску `0xDFFFFFFF`) и обёртки десериализации `phar://` в рамках бюджета L1i.
+
+### Сквозной аудит безопасности и кремниевой изоляции (27 ноября 2026)
+- **Защита от Kernel NFS2ROOT (`CVE-2026-99362`) и VLAN `VID == 0` / QinQ (`CVE-2026-99805`):** Ранний `XDP_DROP` для входящего `TCP/2049` до выделения `sk_buff` и строгая проверка L2-тегов (`VID != 0`, глубина QinQ `<= 2`) в `xdp_shield/`, `modules/pkt_cursor.h` и `SECURITY_ADVISORIES.md`.
+- **Харденинг `W^X`-арены DDR, KVM VT-x и `no_std` утилит (`modules/`, `tools/`):** Устранён `RW`-псевдоним при запечатывании `ddr_arena_seal_wx()`, добавлены `MFD_ALLOW_SEALING` + `F_SEAL_GROW|SHRINK|SEAL` и минное поле `UD2` (`0x0F0B`), усилена зачистка ключей `SHA-256`/`HMAC` (`explicit_bzero`) и лимит фрейма `RFC 9113` (`16 КБ`), проверены все пути `ioctl`/`mmap` в `KVM`/`EPT`, а буферы сырых сисколлов в `tools/zero_ctl.rs` переведены на `write_volatile` + `compiler_fence` (`6.1 КБ`, `-D warnings`, пройдено под **ASan + UBSan + `-fanalyzer`**; `.text` ядра = `6 746 Б` / `9 385 Б <= 16 КБ` L1i).

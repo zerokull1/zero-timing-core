@@ -222,3 +222,7 @@ See [ROADMAP.md](ROADMAP.md) ([Русская версия](ROADMAP.ru.md)) for 
 
 ### CMS & PHP Object Injection SWAR Guard (Nov 2026)
 - **Branchless Protocol Oracle:** Detects unauthenticated CMS setup routes (`/install.php`, `/update.php`, `X-Original-URL` overrides), PHP Object Injection (`O:<digit>:`, `C:<digit>:`, URL-encoded `O%3A` / `C%3A` via `0xDFFFFFFF` case-folding mask), and `phar://` deserialization wrappers within the L1i cache budget.
+
+### Full-Stack Security & Silicon Audit (27 Nov 2026)
+- **Kernel NFS2ROOT (`CVE-2026-99362`) & VLAN `VID == 0` / QinQ (`CVE-2026-99805`) Guard:** Early `XDP_DROP` on `TCP/2049` prior to `sk_buff` allocation and strict L2 VLAN tag validation (`VID != 0`, QinQ depth `<= 2`) across `xdp_shield/`, `modules/pkt_cursor.h`, and `SECURITY_ADVISORIES.md`.
+- **End-to-End `W^X` Arena, KVM VT-x & `no_std` CLI Hardening (`modules/`, `tools/`):** Eliminated `RW` alias exposure in `ddr_arena_seal_wx()`, enforced `MFD_ALLOW_SEALING` + `F_SEAL_GROW|SHRINK|SEAL` and `UD2` (`0x0F0B`) minefields, hardened `SHA-256`/`HMAC` stack wiping (`explicit_bzero`) and `RFC 9113` `16 KB` frame bounds, verified `KVM`/`EPT` enclave `ioctl` error paths, and migrated `tools/zero_ctl.rs` raw syscalls to `write_volatile` + `compiler_fence` (`6.1 KB`, `-D warnings`, **ASan + UBSan + `-fanalyzer`** clean; core `.text = 6,746 B` / `9,385 B <= 16 KB` L1i).
