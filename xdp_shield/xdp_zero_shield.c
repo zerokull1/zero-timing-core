@@ -181,6 +181,12 @@ int xdp_zero_shield_prog(struct xdp_md *ctx) {
         return XDP_DROP;
     }
 
+    /* Linux Kernel NFS2ROOT (27.11.2026): drop external TCP/2049 before sk_buff */
+    if (tcp->dest == bpf_htons(2049)) {
+        st->dropped_null_tcp++;
+        return XDP_DROP;
+    }
+
     __u32 tcp_hdr_len = tcp->doff * 4;
     if (tcp_hdr_len >= sizeof(struct tcphdr)) {
         __u8 *payload = (__u8 *)tcp + tcp_hdr_len;

@@ -1,3 +1,4 @@
+// ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 #include <linux/bpf.h>
 #include <linux/pkt_cls.h>
 #include <linux/if_ether.h>
@@ -7,43 +8,37 @@
 
 #define ZEROMANI_EGRESS_MASK 0x5A45
 
-// Выходной шлюз NIC: снимает внутреннюю хостовую мутацию и выпускает в сеть чистый трафик (TTL=65)
 SEC("classifier")
 int tc_egress_mutagen(struct __sk_buff *skb) {
     void *data = (void *)(long)skb->data;
     void *data_end = (void *)(long)skb->data_end;
-
     struct ethhdr *eth = data;
     if ((void *)(eth + 1) > data_end) return TC_ACT_OK;
     if (eth->h_proto != bpf_htons(ETH_P_IP)) return TC_ACT_OK;
 
     struct iphdr *iph = (void *)(eth + 1);
     if ((void *)(iph + 1) > data_end) return TC_ACT_OK;
+    if (iph->version != 4 || iph->ihl != 5) return TC_ACT_SHOT;
     if ((iph->daddr & bpf_htonl(0xFF000000)) == bpf_htonl(0x7F000000)) return TC_ACT_OK;
 
-    // 1. Демутация внутреннего IPv4 Identification перед выходом в интернет
     if ((iph->id & bpf_htons(0xFF00)) == bpf_htons(0x5A00)) {
         __be16 old_id = iph->id;
         __be16 clean_id = old_id ^ bpf_htons(ZEROMANI_EGRESS_MASK);
         iph->id = clean_id;
         bpf_l3_csum_replace(skb, sizeof(*eth) + offsetof(struct iphdr, check), old_id, clean_id, 2);
+        data = (void *)(long)skb->data;
+        data_end = (void *)(long)skb->data_end;
+        eth = data; iph = (void *)(eth + 1);
+        if ((void *)(iph + 1) > data_end) return TC_ACT_OK;
     }
-
-    // 2. Нормализация TTL=65 на выходе NIC (для прозрачной раздачи со смартфона)
-    data = (void *)(long)skb->data;
-    data_end = (void *)(long)skb->data_end;
-    eth = data; iph = (void *)(eth + 1);
-    if ((void *)(iph + 1) > data_end) return TC_ACT_OK;
 
     if (iph->ttl != 65) {
         __u8 old_ttl = iph->ttl;
-        __u8 new_ttl = 65;
         __be16 old_w = bpf_htons(((__u16)old_ttl << 8) | iph->protocol);
-        __be16 new_w = bpf_htons(((__u16)new_ttl << 8) | iph->protocol);
-        iph->ttl = new_ttl;
+        __be16 new_w = bpf_htons(((65U << 8) | iph->protocol));
+        iph->ttl = 65;
         bpf_l3_csum_replace(skb, sizeof(*eth) + offsetof(struct iphdr, check), old_w, new_w, 2);
     }
     return TC_ACT_OK;
 }
-
 char _license[] SEC("license") = "GPL";

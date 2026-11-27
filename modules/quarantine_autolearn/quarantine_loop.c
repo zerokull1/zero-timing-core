@@ -18,6 +18,7 @@ int main() {
     uint32_t *block_tbl = (uint32_t *)ddr_arena_alloc_data(&arena, 256 * sizeof(uint32_t), 64);
     q_record_t *uring_log = (q_record_t *)ddr_arena_alloc_data(&arena, 64 * sizeof(q_record_t), 64);
 
+    if (!allow_tbl || !block_tbl || !uring_log) { ddr_arena_destroy(&arena); return 1; }
     *(allow_tbl + 0x10) = 0x10;
     *(block_tbl + 0xDE) = 0xDE;
 
@@ -31,9 +32,9 @@ int main() {
         else if (*(block_tbl + s) == s) { drop1++; }
         else {
             quar1++;
-            (uring_log + log_cnt)->sig = s;
+            if (log_cnt < 64) { (uring_log + log_cnt)->sig = s;
             (uring_log + log_cnt)->payload_byte = (s == 0x77) ? 0x20 : 0xFF; // 0x20 = норма, 0xFF = сканер
-            log_cnt++;
+            log_cnt++; }
         }
     }
 

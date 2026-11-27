@@ -1,3 +1,4 @@
+// ZEROMANI (zerokull1) | 0x5A45524F4D414E49ULL
 #include "../module_abi.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -112,7 +113,7 @@ int spoof_learn_peer(const uint8_t *buf, size_t len) {
             return 1;
         }
         if (slot->src_ip == src_ip) {
-            slot->mac_ttl_sig = sig;
+            if (slot->mac_ttl_sig != sig) return -3;
             slot->seen_count++;
             return 0;
         }
@@ -133,7 +134,7 @@ static size_t spoof_process_frame(uint8_t *buf, size_t len, size_t max_cap, uint
     uint64_t sig = pack_mac_ttl(buf + 6, ttl);
 
     uint32_t idx = slot_index(src_ip);
-    for (uint32_t step = 0; step < 8; step++) {
+    for (uint32_t step = 0; step < SPOOF_SLOTS; step++) {
         uint32_t pos = (idx + step) & (SPOOF_SLOTS - 1);
         spoof_binding_t *slot = bindings + pos;
         if (slot->mac_ttl_sig == 0) return 0; // неизвестный внешний узел
