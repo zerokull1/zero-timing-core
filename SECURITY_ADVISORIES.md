@@ -52,3 +52,8 @@
 ### 2026-11-26 — Drupal Core & PHP Serialization Protocol Guard (`CVE-2026-136716`, `CVE-2026-132165`, `CVE-2026-132166`)
 - **Vector:** Unauthenticated `/install.php` & `/update.php` probing (including `X-Original-URL` override), PHP Object Injection (`O:<digit>:`, `C:<digit>:`, `O%3A`, `C%3A`), and `phar://` stream wrappers.
 - **Mitigation:** Added branchless endian-safe SWAR scanner `inspect_php_proto_vector_swar` (`~1 cycle / 4B`, `0 FP` on REST/JSON) across `zero-timing-core` and `zerokull-c11-go`.
+
+## 27.11.2026 — Kernel NFS2ROOT, VLAN VID=0 & CMS Forceful Browsing
+- **CVE-2026-99362 (Linux Kernel NFS2ROOT, TCP/2049):** Ранний `XDP_DROP` входящих TCP-сегментов на порт `2049` до аллокации `sk_buff` (`xdp_shield/xdp_zero_shield.c`, `zerokull-c11-go`).
+- **CVE-2026-99805 (Linux Kernel VLAN / QinQ):** Отсечка нулевого тега `VID == 0` и вложенности QinQ > 2 уровней на границе L2 (`xdp_shield/xdp_zero_shield.c`, `modules/pkt_cursor.h`).
+- **CVE-2026-132165 / CVE-2026-136716 (Drupal Fail2Install & Forceful Browsing, CISA KEV):** Безветвящийся SWAR-перехват `/install.php`, `/update.php` и заголовков `X-Original-URL` в `src/l7_shield.rs`.
