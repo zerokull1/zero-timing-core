@@ -92,7 +92,7 @@ unsafe fn sys_socket(domain: usize, ty: usize, proto: usize) -> isize { unsafe {
 #[inline(always)]
 unsafe fn sys_setsockopt(fd: usize, level: usize, optname: usize, optval: *const u8, optlen: usize) -> isize { unsafe {
     let ret: isize;
-    asm!("syscall", in("rax") 54usize, in("rdi") fd, in("rsi") level, in("rdx") optname, in("r10") optval, in("r8") optlen, lateout("rax") ret, out("rcx") _, out("r11") _, options(nostack));
+    asm!("syscall", in("rax") 54usize, in("rdi") fd, in("rsi") level, in("rdx") optname, in("r10") core::hint::black_box(optval), in("r8") optlen, lateout("rax") ret, out("rcx") _, out("r11") _, options(nostack));
     ret
 }}
 
@@ -106,14 +106,14 @@ unsafe fn sys_getsockopt(fd: usize, level: usize, optname: usize, optval: *mut u
 #[inline(always)]
 unsafe fn sys_bind(fd: usize, addr: *const u8, addrlen: usize) -> isize { unsafe {
     let ret: isize;
-    asm!("syscall", in("rax") 49usize, in("rdi") fd, in("rsi") addr, in("rdx") addrlen, lateout("rax") ret, out("rcx") _, out("r11") _, options(nostack));
+    asm!("syscall", in("rax") 49usize, in("rdi") fd, in("rsi") core::hint::black_box(addr), in("rdx") addrlen, lateout("rax") ret, out("rcx") _, out("r11") _, options(nostack));
     ret
 }}
 
 #[inline(always)]
 unsafe fn sys_bpf(cmd: usize, attr: *const BpfAttrMapElem, size: usize) -> isize { unsafe {
     let ret: isize;
-    asm!("syscall", in("rax") 321usize, in("rdi") cmd, in("rsi") attr, in("rdx") size, lateout("rax") ret, out("rcx") _, out("r11") _, options(nostack));
+    asm!("syscall", in("rax") 321usize, in("rdi") cmd, in("rsi") core::hint::black_box(attr), in("rdx") size, lateout("rax") ret, out("rcx") _, out("r11") _, options(nostack));
     ret
 }}
 
@@ -237,11 +237,23 @@ pub fn run_live_xdp_zerocopy_rx(ifindex: u32, xsk_map_fd: i32) -> (isize, usize,
                     fence(Ordering::Acquire);
                     let desc = core::ptr::read_volatile(rx_desc.add((cons_idx & 63) as usize));
                     rx_len = desc.len;
-                    // Передаём указатель на L7 TCP Payload (смещение 14 Eth + 20 IP + 20 TCP = 54 байта) в ASM L7 DPI
-                    if rx_len >= 70 {
-                        let payload_ptr = umem_ptr.add(desc.addr as usize + 54);
-                        let v = crate::l7_shield::inspect_l7_payload_asm(payload_ptr, (rx_len - 54) as usize, 80);
-                        l7_verdict = v as u8;
+                    if (desc.addr as usize).saturating_add(rx_len as usize) <= umem_size && rx_len >= 54 {
+                        let frame_ptr = umem_ptr.add(desc.addr as usize);
+                        let ihl = ((*frame_ptr.add(14) & 0x0f) as usize) * 4;
+                        let tcp_off = 14 + ihl;
+                        if ihl >= 20 && (rx_len as usize) >= tcp_off + 20 {
+                            let doff = (((*frame_ptr.add(tcp_off + 12) >> 4) & 0x0f) as usize) * 4;
+                            let l7_off = tcp_off + doff;
+                            let dst_port = u16::from_be(core::ptr::read_unaligned(frame_ptr.add(tcp_off + 2) as *const u16));
+                            if doff >= 20 && (rx_len as usize) > l7_off {
+                                let v = crate::l7_shield::inspect_l7_payload_asm(
+                                    frame_ptr.add(l7_off),
+                                    (rx_len as usize) - l7_off,
+                                    dst_port,
+                                );
+                                l7_verdict = v as u8;
+                            }
+                        }
                     }
                     core::ptr::write_volatile(rx_cons, cons_idx.wrapping_add(1));
                     break;
@@ -280,7 +292,7 @@ struct PollFd {
 #[inline(always)]
 unsafe fn sys_poll(fds: *mut PollFd, nfds: usize, timeout_ms: i32) -> isize { unsafe {
     let ret: isize;
-    asm!("syscall", in("rax") 7usize, in("rdi") fds, in("rsi") nfds, in("rdx") timeout_ms, lateout("rax") ret, out("rcx") _, out("r11") _, options(nostack));
+    asm!("syscall", in("rax") 7usize, in("rdi") core::hint::black_box(fds), in("rsi") nfds, in("rdx") timeout_ms, lateout("rax") ret, out("rcx") _, out("r11") _, options(nostack));
     ret
 }}
 
@@ -294,7 +306,7 @@ pub unsafe fn open_pinned_xsk_map() -> i32 { unsafe {
         },
     };
     let fd: isize;
-    asm!("syscall", in("rax") 321usize, in("rdi") 7usize, in("rsi") &attr, in("rdx") core::mem::size_of::<BpfAttrObj>(), lateout("rax") fd, out("rcx") _, out("r11") _, options(nostack));
+    asm!("syscall", in("rax") 321usize, in("rdi") 7usize, in("rsi") core::hint::black_box(&attr), in("rdx") core::mem::size_of::<BpfAttrObj>(), lateout("rax") fd, out("rcx") _, out("r11") _, options(nostack));
     fd as i32
 }}
 
