@@ -14,3 +14,18 @@ zero_tick_dispatcher
 zbuild
 zcheck
 *.ko
+
+# Build artifacts & keys
+*.o
+*.so
+*.a
+*.rlib
+*.key
+*.pem
+*.log
+SESSION_HANDOFF*.txt
+
+# Local handoffs & Python cache
+SESSION_HANDOFF*.txt
+__pycache__/
+*.pyc
