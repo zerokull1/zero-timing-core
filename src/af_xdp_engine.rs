@@ -459,6 +459,10 @@ pub unsafe fn benchmark_live_xdp_burst(
                     let frame_ptr = unsafe { umem_ptr.add(desc.addr as usize) };
                     let ihl = ((unsafe { *frame_ptr.add(14) } & 0x0f) as usize) * 4;
                     let tcp_off = 14 + ihl;
+                    if ihl < 20 || (desc.len as usize) < tcp_off + 20 {
+                        cons = cons.wrapping_add(1);
+                        continue;
+                    }
                     let doff = (((unsafe { *frame_ptr.add(tcp_off + 12) } >> 4) & 0x0f) as usize) * 4;
                     let l7_off = tcp_off + doff;
                     let src_ip = unsafe { core::ptr::read_unaligned(frame_ptr.add(26) as *const u32) };

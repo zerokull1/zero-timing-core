@@ -52,6 +52,7 @@ static void sha256_raw(const uint8_t *msg, size_t len, uint8_t *out32) {
 }
 
 static void hmac_sha256_32(const uint8_t *key32, const uint8_t *data, size_t len, uint8_t *mac32) {
+    if (!key32 || !data || !mac32 || len > 55) return;
     uint8_t *buf_in = __builtin_alloca(128), *buf_out = __builtin_alloca(128), *inner = __builtin_alloca(32);
     for (int i = 0; i < 32; i++) { *(buf_in+i) = *(key32+i) ^ 0x36; *(buf_out+i) = *(key32+i) ^ 0x5c; }
     memset(buf_in + 32, 0x36, 32); memset(buf_out + 32, 0x5c, 32);
