@@ -208,6 +208,25 @@ pub extern "C" fn test_main(argc: usize, argv: *const *const u8) -> ! {
         zero_core_lib::l7_shield::inspect_php_proto_vector_swar(b"");
         panic!("PHP/CMS SWAR test failed");
     }
+    {
+        let mut slot = zero_core_lib::l7_shield::MetaNormSlot {
+            flow_hash: 0, meta_anchor: 0, seq_or_ctr: 0, state: 0, _pad: [0; 39],
+        };
+        let mut pkt = [0u8; 148];
+        let v0 = zero_core_lib::l7_shield::normalize_64b_gate(&mut slot, 0x1111, false, 0x02, &[]);
+        let v1 = zero_core_lib::l7_shield::normalize_64b_gate(&mut slot, 0x1111, false, 0x18, &pkt[..32]);
+        let v2 = zero_core_lib::l7_shield::normalize_64b_gate(&mut slot, 0x1111, false, 0x18, &pkt[..64]);
+        pkt[0] = 1; pkt[4] = 0xAA;
+        let w0 = zero_core_lib::l7_shield::normalize_64b_gate(&mut slot, 0x2222, true, 0, &pkt[..148]);
+        pkt[0] = 2; pkt[4] = 0x55; pkt[8] = 0xBB;
+        let w1 = zero_core_lib::l7_shield::normalize_64b_gate(&mut slot, 0x2222, true, 0, &pkt[..92]);
+        pkt[8] = 0xAA;
+        let w2 = zero_core_lib::l7_shield::normalize_64b_gate(&mut slot, 0x2222, true, 0, &pkt[..92]);
+        pkt[0] = 4; pkt[4] = 0x55; pkt[8] = 1;
+        let w3 = zero_core_lib::l7_shield::normalize_64b_gate(&mut slot, 0x2222, true, 0, &pkt[..32]);
+        let w4 = zero_core_lib::l7_shield::normalize_64b_gate(&mut slot, 0x2222, true, 0, &pkt[..64]);
+        check(v0 == 0 && v1 == 1 && v2 == 0 && w0 == 0 && w1 == 1 && w2 == 0 && w3 == 1 && w4 == 0, b"[FAIL] normalize_64b_gate\n");
+    }
     let ok_msg = b"[OK] cargo test (no_std / no_main): 128-bit TLS Downgrade, L7 ASM, SMP VM-Exit & EPT XO VERIFIED!\n";
     unsafe {
         sys_write(1, ok_msg.as_ptr(), ok_msg.len());

@@ -792,3 +792,87 @@ pub fn inspect_php_proto_vector_swar(buf: &[u8]) -> bool {
     }
     hit != 0
 }
+
+
+#[repr(C, align(64))]
+pub struct MetaNormSlot {
+    pub flow_hash: u64,
+    pub meta_anchor: u64,
+    pub seq_or_ctr: u64,
+    pub state: u8,
+    pub _pad: [u8; 39],
+}
+
+/// Кросс-слойный нормализатор метаданных (0=PASS, 1=DROP):
+/// 1) Жесткий отсев разрыва 64B на 2x32B (любой стартовый TCP L7 < 64B без FIN -> DROP)
+/// 2) Привязка индексов и монотонности счетчика WireGuard (148B -> 92B -> >=64B, кратно 16B)
+#[inline]
+pub fn normalize_64b_gate(
+    slot: &mut MetaNormSlot,
+    hash: u64,
+    is_udp: bool,
+    tcp_flags: u8,
+    l7: &[u8],
+) -> u8 {
+    let l7_len = l7.len();
+    if is_udp {
+        if l7_len < 16 {
+            return 1;
+        }
+        let w0 = u32::from_le_bytes([l7[0], l7[1], l7[2], l7[3]]);
+        let idx1 = u32::from_le_bytes([l7[4], l7[5], l7[6], l7[7]]);
+        let idx2 = u32::from_le_bytes([l7[8], l7[9], l7[10], l7[11]]);
+        let ctr = u64::from_le_bytes([
+            l7[8], l7[9], l7[10], l7[11], l7[12], l7[13], l7[14], l7[15],
+        ]);
+
+        let msg_type = w0 & 0xFF;
+        let rsv_ok = ((w0 >> 8) == 0) as u8;
+        let same_flow = (slot.flow_hash == hash) as u8;
+        let cli_idx = slot.meta_anchor as u32;
+        let srv_idx = (slot.meta_anchor >> 32) as u32;
+
+        let is_init = ((msg_type == 1) & (l7_len == 148) & (rsv_ok == 1)) as u8;
+        let is_resp = ((msg_type == 2) & (l7_len == 92) & (rsv_ok == 1)
+            & (same_flow == 1) & (slot.state == 1) & (idx2 == cli_idx)) as u8;
+        let is_cook = ((msg_type == 3) & (l7_len == 64) & (rsv_ok == 1)
+            & (same_flow == 1) & (slot.state == 1) & (idx2 == cli_idx)) as u8;
+
+        let idx_ok = ((idx1 == srv_idx) | (idx1 == cli_idx)) as u8;
+        let ctr_ok = ((ctr >= slot.seq_or_ctr) | (slot.seq_or_ctr.wrapping_sub(ctr) <= 2048)) as u8;
+        let is_data = ((msg_type == 4) & (l7_len >= 64) & ((l7_len & 15) == 0) & (rsv_ok == 1)
+            & (same_flow == 1) & (slot.state == 2) & (idx_ok == 1) & (ctr_ok == 1)) as u8;
+
+        if is_init == 1 {
+            slot.flow_hash = hash;
+            slot.meta_anchor = idx1 as u64;
+            slot.seq_or_ctr = 0;
+            slot.state = 1;
+        } else if is_resp == 1 {
+            slot.meta_anchor = ((idx1 as u64) << 32) | (cli_idx as u64);
+            slot.state = 2;
+        } else if is_data == 1 && ctr > slot.seq_or_ctr {
+            slot.seq_or_ctr = ctr;
+        }
+        return (is_init | is_resp | is_cook | is_data) ^ 1;
+    }
+
+    if (tcp_flags & 0x17) == 0x02 {
+        if l7_len != 0 {
+            return 1;
+        }
+        slot.flow_hash = hash;
+        slot.state = 1;
+        return 0;
+    }
+    if slot.flow_hash != hash || slot.state == 0 {
+        return 1;
+    }
+    if l7_len > 0 && slot.state == 1 {
+        if l7_len < 64 && (tcp_flags & 0x01) == 0 {
+            return 1;
+        }
+        slot.state = 2;
+    }
+    0
+}
