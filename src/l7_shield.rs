@@ -811,6 +811,7 @@ pub fn normalize_64b_gate(
     slot: &mut MetaNormSlot,
     hash: u64,
     is_udp: bool,
+    is_cleartext_http: bool,
     tcp_flags: u8,
     l7: &[u8],
 ) -> u8 {
@@ -869,7 +870,7 @@ pub fn normalize_64b_gate(
         return 1;
     }
     if l7_len > 0 && slot.state == 1 {
-        if l7_len < 64 && (tcp_flags & 0x01) == 0 {
+        if is_cleartext_http && l7_len < 64 && (tcp_flags & 0x01) == 0 {
             return 1;
         }
         slot.state = 2;
