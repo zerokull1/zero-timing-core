@@ -683,7 +683,7 @@ pub unsafe fn canonical_l7_normalizer(dport: u16, l7: *const u8, len: usize) -> 
                 if b0 == b'%' && i + 2 < uri_lim {
                     let h1 = *l7.add(i + 1) | 0x20;
                     let h2 = *l7.add(i + 2) | 0x20;
-                    if (h1 == b'2' && (h2 == b'e' || h2 == b'f')) || (h1 == b'5' && h2 == b'c') || (h1 == b'0' && h2 == b'0') {
+                    if (h1 == b'2' && (h2 == b'e' || h2 == b'f')) || (h1 == b'5' && h2 == b'c') || (h1 == b'0' && h2 == b'0') || (h1 == b'2' && h2 == b'5' && i + 3 < uri_lim && *l7.add(i + 3) == b'2') {
                         return 2;
                     }
                 }
@@ -708,6 +708,7 @@ pub unsafe fn canonical_l7_normalizer(dport: u16, l7: *const u8, len: usize) -> 
                     if w0 == 0x0D54_4E45_544E_4F43 && (*l7.add(h + 8) & 0xDF) == b'L' && *l7.add(h + 14) == b':' { has_cl += 1; }
                     if w0 == 0x5245_4653_4E41_5254 && (*l7.add(h + 16) & 0xDF) == b'G' && *l7.add(h + 17) == b':' { has_te += 1; }
                     if (w0 & 0x00FF_FFFF_FFFF_FFFF) == 0x0045_4441_5247_5055 && *l7.add(h + 7) == b':' { has_upg += 1; }
+                    if w0 == 0x4E49_4749_524F_0D58 || w0 == 0x5449_5257_4552_0D58 { return 2; }
                     if (w0 & 0x0000_0000_FFFF_FFFF) == 0x0000_0000_5453_4F48 && *l7.add(h + 4) == b':' {
                         let mut v = h + 5;
                         while v + 9 <= hdr_lim && (*l7.add(v) == b' ' || *l7.add(v) == 0x09) { v += 1; }
@@ -720,12 +721,14 @@ pub unsafe fn canonical_l7_normalizer(dport: u16, l7: *const u8, len: usize) -> 
                 h += 1;
             }
             if (has_cl != 0 && has_te != 0) || has_cl > 1 || has_te > 1 || (has_upg != 0 && (has_te != 0 || has_cl != 0)) { return 2; }
-            if body_off > 0 && body_off + 6 <= len {
-                let b = u32::from_le_bytes([
-                    *l7.add(body_off), *l7.add(body_off + 1), *l7.add(body_off + 2), *l7.add(body_off + 3)
-                ]);
-                if b == 0x6D783F3C || b == 0x4F44213C || b == 0x41304F72 || b == 0x0500EDAC {
-                    return 2;
+            if body_off > 0 && body_off + 4 <= len {
+                let mut bo = body_off;
+                while bo + 4 <= len && bo < body_off + 16 && (*l7.add(bo) == b' ' || *l7.add(bo) == 0x09 || *l7.add(bo) == 0x0D || *l7.add(bo) == 0x0A) { bo += 1; }
+                if bo + 4 <= len {
+                    let b = u32::from_le_bytes([*l7.add(bo), *l7.add(bo + 1), *l7.add(bo + 2), *l7.add(bo + 3)]);
+                    if b == 0x6D783F3C || b == 0x4F44213C || b == 0x4E45213C || b == 0x41304F72 || b == 0x0500EDAC {
+                        return 2;
+                    }
                 }
             }
         }

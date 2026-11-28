@@ -228,6 +228,18 @@ pub extern "C" fn test_main(argc: usize, argv: *const *const u8) -> ! {
         let w4 = zero_core_lib::l7_shield::normalize_64b_gate(&mut slot, 0x2222, true, false, 0, &pkt[..64]);
         check(v0 == 0 && v1 == 1 && v2 == 0 && w0 == 0 && w1 == 1 && w2 == 0 && w3 == 1 && w4 == 0, b"[FAIL] normalize_64b_gate\n");
     }
+    // Transit CISA KEV regression (Double-encoded %252e, X-Rewrite-URL, padded <!ENTITY -> 2, LEGIT -> 0)
+    {
+        let tr_dbl = b"GET /npm-pwg/%252e%252e/etc/passwd HTTP/1.1\r\nHost: mitel.local\r\n\r\n";
+        let tr_xrw = b"GET /api/v1/status HTTP/1.1\r\nHost: juniper.local\r\nX-Rewrite-URL: /admin\r\n\r\n";
+        let tr_xxe = b"POST /xmlrpc HTTP/1.1\r\nHost: danfoss.local\r\nContent-Length: 32\r\n\r\n  \n<!ENTITY xxe SYSTEM \"x\">";
+        let tr_ok  = b"POST /api/v1/telemetry HTTP/1.1\r\nHost: edge.local\r\nContent-Length: 18\r\n\r\n{\"status\":\"ready\"}";
+        let r1 = unsafe { zero_core_lib::l7_shield::canonical_l7_normalizer(8443, tr_dbl.as_ptr(), tr_dbl.len()) };
+        let r2 = unsafe { zero_core_lib::l7_shield::canonical_l7_normalizer(8443, tr_xrw.as_ptr(), tr_xrw.len()) };
+        let r3 = unsafe { zero_core_lib::l7_shield::canonical_l7_normalizer(8443, tr_xxe.as_ptr(), tr_xxe.len()) };
+        let r4 = unsafe { zero_core_lib::l7_shield::canonical_l7_normalizer(8443, tr_ok.as_ptr(), tr_ok.len()) };
+        check(r1 == 2 && r2 == 2 && r3 == 2 && r4 == 0, b"[FAIL] transit_kev_swar\n");
+    }
     let ok_msg = b"[OK] cargo test (no_std / no_main): 128-bit TLS Downgrade, L7 ASM, SMP VM-Exit & EPT XO VERIFIED!\n";
     unsafe {
         sys_write(1, ok_msg.as_ptr(), ok_msg.len());
