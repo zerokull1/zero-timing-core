@@ -142,3 +142,60 @@ pub unsafe fn tx_send_frame(bar0: usize, mac: [u8; 6]) -> u8 {
     }
     0
 }
+
+#[repr(C, align(16))]
+#[derive(Clone, Copy)]
+pub struct RxDesc {
+    pub addr: u64,
+    pub length: u16,
+    pub checksum: u16,
+    pub status: u8,
+    pub errors: u8,
+    pub special: u16,
+}
+
+#[repr(C, align(128))]
+struct AlignedRxRing([RxDesc; 8]);
+
+#[repr(C, align(64))]
+struct AlignedRxBufs([[u8; 2048]; 8]);
+
+static mut RX_RING: AlignedRxRing = AlignedRxRing([RxDesc {
+    addr: 0, length: 0, checksum: 0, status: 0, errors: 0, special: 0,
+}; 8]);
+static mut RX_BUFS: AlignedRxBufs = AlignedRxBufs([[0u8; 2048]; 8]);
+
+pub unsafe fn rx_ring_arm(bar0: usize) {
+    let ring = (&raw mut RX_RING.0).cast::<RxDesc>();
+    let bufs = (&raw mut RX_BUFS.0).cast::<[u8; 2048]>();
+    for i in 0..8usize {
+        let d = ring.add(i);
+        write_volatile(&raw mut (*d).addr, bufs.add(i) as u64);
+        write_volatile(&raw mut (*d).status, 0);
+    }
+    let addr = ring as u64;
+    write_volatile((bar0 + 0x2800) as *mut u32, (addr & 0xFFFF_FFFF) as u32);
+    write_volatile((bar0 + 0x2804) as *mut u32, (addr >> 32) as u32);
+    write_volatile((bar0 + 0x2808) as *mut u32, 128);
+    write_volatile((bar0 + 0x2810) as *mut u32, 0);
+    write_volatile((bar0 + 0x2818) as *mut u32, 7);
+    fence(Ordering::Release);
+    write_volatile((bar0 + 0x0100) as *mut u32, (1 << 1) | (1 << 3) | (1 << 4) | (1 << 15) | (1 << 26));
+}
+
+pub unsafe fn rx_poll_and_filter(bar0: usize, inspect_fn: unsafe fn(*const u8, usize) -> u32) -> (u32, u32) {
+    let (mut ok, mut drop) = (0u32, 0u32);
+    let ring = (&raw mut RX_RING.0).cast::<RxDesc>();
+    let bufs = (&raw const RX_BUFS.0).cast::<u8>();
+    for i in 0..8usize {
+        let d = ring.add(i);
+        if (read_volatile(&raw const (*d).status) & 1) == 0 { break; }
+        fence(Ordering::Acquire);
+        let len = (read_volatile(&raw const (*d).length) as usize).min(2048);
+        if inspect_fn(bufs.add(i * 2048), len) == 0 { ok += 1; } else { drop += 1; }
+        write_volatile(&raw mut (*d).status, 0);
+        fence(Ordering::Release);
+        write_volatile((bar0 + 0x2818) as *mut u32, i as u32);
+    }
+    (ok, drop)
+}

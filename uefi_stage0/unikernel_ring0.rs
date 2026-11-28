@@ -5,6 +5,8 @@
 mod pci_nic;
 #[path = "../src/thin_hypervisor.rs"]
 mod thin_hypervisor;
+#[path = "../src/l7_shield.rs"]
+mod l7_shield;
 use core::arch::asm;
 
 type EfiStatus = usize;
@@ -217,13 +219,34 @@ unsafe fn periodic_realign_pulse(a: &mut UefiPulseAnchor, now_tsc: u64, arrived:
     true
 }
 
-// Безветвящийся L7 + TTL Shield в голом Ring 0
-#[inline(always)]
-fn ring0_inspect_packet(ttl: u8, expected_ttl: u8, payload_magic: u64) -> u64 {
-    let ttl_diff = (ttl as i32 - expected_ttl as i32).unsigned_abs();
-    let ttl_bad = if ttl_diff > 5 { 1u64 } else { 0u64 };
-    let bad_sig = if payload_magic == 0x5A45524F_44524F50 { 1u64 } else { 0u64 };
-    ttl_bad | bad_sig
+#[inline(never)]
+unsafe fn bare_metal_wire_inspect(frame: *const u8, frame_len: usize) -> u32 {
+    if frame.is_null() || frame_len < 34 { return 1; }
+    let mut off = 12usize;
+    let mut etype = u16::from_be_bytes([*frame.add(off), *frame.add(off + 1)]);
+    off += 2;
+    let mut vdepth = 0u8;
+    while etype == 0x8100 || etype == 0x88A8 {
+        vdepth += 1;
+        if vdepth > 2 || off + 4 > frame_len { return 1; }
+        let tci = u16::from_be_bytes([*frame.add(off), *frame.add(off + 1)]);
+        if (tci & 0x0FFF) == 0 { return 1; }
+        etype = u16::from_be_bytes([*frame.add(off + 2), *frame.add(off + 3)]);
+        off += 4;
+    }
+    if etype == 0x88B5 { return 0; }
+    if etype != 0x0800 || off + 20 > frame_len { return 1; }
+    let ip = frame.add(off);
+    let ip_len = frame_len - off;
+    if l7_shield::canonical_l3_l4_gate(ip, ip_len) != 0 { return 1; }
+    if *ip.add(9) != 6 { return 0; }
+    let doff = ((*ip.add(32) >> 4) as usize) * 4;
+    if doff < 20 || 20 + doff > ip_len { return 1; }
+    let dport = u16::from_be_bytes([*ip.add(22), *ip.add(23)]);
+    let l7 = ip.add(20 + doff);
+    let l7_len = ip_len - 20 - doff;
+    if l7_shield::canonical_l7_normalizer(dport, l7, l7_len) != 0 { return 2; }
+    0
 }
 
 #[no_mangle]
@@ -260,6 +283,21 @@ pub extern "efiapi" fn efi_main(image_handle: EfiHandle, system_table: *const Ef
         serial_write_bytes(b"[OK] ExitBootServices() succeeded! Firmware drivers terminated.\r\n");
         serial_write_bytes(b"[OK] Interrupts masked (cli). Pure Polling Mode engaged.\r\n");
         lock_hardware_nxe_and_smram();
+        // Аппаратная активация SSE/AVX в голом Ring 0 (CR0.MP=1, CR0.EM=0, CR4.OSFXSR+OSXSAVE, XCR0=0x7)
+        asm!(
+            "mov rax, cr0",
+            "and al, 0xFB",
+            "or al, 0x02",
+            "mov cr0, rax",
+            "mov rax, cr4",
+            "or eax, (1 << 9) | (1 << 10) | (1 << 18)",
+            "mov cr4, rax",
+            "xor ecx, ecx",
+            "xgetbv",
+            "or eax, 0x7",
+            "xsetbv",
+            out("rax") _, out("rcx") _, out("rdx") _, options(nostack, nomem)
+        );
         serial_write_bytes(b"[SEC] Hardware EFER.NXE Enabled + SMRAM D_LCK Locked [OK]\r\n");
         let mut boot_pulse = calibrate_uefi_boot_pulse();
         serial_write_bytes(b"[PULSE-0] UEFI Boot Master Pulse Calibrated | Period=");
@@ -271,7 +309,7 @@ pub extern "efiapi" fn efi_main(image_handle: EfiHandle, system_table: *const Ef
         let ctx_ptr = core::ptr::addr_of_mut!(RACK_CORE0_CTX);
         match thin_hypervisor::arm_rack_core_ring_minus_1(&mut *ctx_ptr) {
             Ok(backend) => {
-                let code_phys = (ring0_inspect_packet as *const () as usize) as u64;
+                let code_phys = (bare_metal_wire_inspect as *const () as usize) as u64;
                 (*core::ptr::addr_of_mut!(RACK_EPT_PT)).map_execute_only_4k(0, code_phys);
                 let trap = thin_hypervisor::classify_vmexit_branchless(backend, 48);
                 serial_write_bytes(b"[RING -1] Hardware Hypervisor Armed! Backend=");
@@ -303,22 +341,53 @@ pub extern "efiapi" fn efi_main(image_handle: EfiHandle, system_table: *const Ef
                 if i < 5 { serial_write_bytes(b":"); }
             }
             serial_write_bytes(b"\r\n");
+            pci_nic::rx_ring_arm(bar0);
+            let (rx_ok, rx_drop) = pci_nic::rx_poll_and_filter(bar0, bare_metal_wire_inspect);
             let tx_st = pci_nic::tx_send_frame(bar0, mac);
             pci_nic::quiesce_intel_nic(bar0);
-            serial_write_bytes(b"[TX-DMA] MMIO Doorbell Fired | Descriptor Status: ");
+            serial_write_bytes(b"[RX-DMA] Ring Armed (128B) | Polled OK=");
+            serial_write_u64(rx_ok as u64);
+            serial_write_bytes(b" DROP=");
+            serial_write_u64(rx_drop as u64);
+            serial_write_bytes(b"\r\n[TX-DMA] MMIO Doorbell Fired | Descriptor Status: ");
             serial_write_hex8(tx_st);
             serial_write_bytes(b" (DD=1 Sent to Wire!)\r\n");
         }
 
-        // Боевой прогон 1 000 000 пакетов прямо в голом Ring 0
+        let mut clean = [0u8; 88];
+        let p = clean.as_mut_ptr();
+        core::ptr::write_unaligned(p.add(12) as *mut u16, 0x0800u16.to_be());
+        core::ptr::write_volatile(p.add(14), 0x45);
+        core::ptr::write_unaligned(p.add(16) as *mut u16, 74u16.to_be());
+        core::ptr::write_volatile(p.add(22), 64);
+        core::ptr::write_volatile(p.add(23), 6);
+        core::ptr::write_unaligned(p.add(34) as *mut u16, 51234u16.to_be());
+        core::ptr::write_unaligned(p.add(36) as *mut u16, 80u16.to_be());
+        core::ptr::write_volatile(p.add(46), 0x50);
+        core::ptr::write_volatile(p.add(47), 0x18);
+        core::ptr::write_unaligned(p.add(48) as *mut u16, 1024u16.to_be());
+        core::ptr::copy_nonoverlapping(b"GET /api/v1/health HTTP/1.1\r\nHost:".as_ptr(), p.add(54), 34);
+
+        let mut a1 = clean;
+        core::ptr::copy_nonoverlapping(b"GET /%252e%252e/etc/passwd HTTP/1.".as_ptr(), a1.as_mut_ptr().add(54), 34);
+        let mut a2 = clean;
+        core::ptr::copy_nonoverlapping(b"GET / HTTP/1.1\r\nX-Original-URL: /a".as_ptr(), a2.as_mut_ptr().add(54), 34);
+        let mut a3 = clean;
+        core::ptr::copy_nonoverlapping(b"POST /api HTTP/1.1\r\n\r\n\n<!ENTITY x".as_ptr(), a3.as_mut_ptr().add(54), 34);
+        let mut a4 = clean;
+        core::ptr::write_volatile(a4.as_mut_ptr().add(14), 0x46);
+
         let batch = 1_000_000u64;
         let mut dropped = 0u64;
+        let mut fp = 0u64;
         let t0 = rdtscp_serialized();
         for i in 0..batch {
             let idx = core::hint::black_box(i);
-            let ttl = if (idx & 7) == 0 { 41 } else { 64 };
-            let magic = if (idx & 15) == 0 { 0x5A45524F_44524F50 } else { 0x11223344_55667788 };
-            dropped += core::hint::black_box(ring0_inspect_packet(ttl, 64, magic));
+            let ptr = match idx & 7 {
+                0 => a1.as_ptr(), 2 => a2.as_ptr(), 4 => a3.as_ptr(), 6 => a4.as_ptr(), _ => clean.as_ptr(),
+            };
+            let v = core::hint::black_box(bare_metal_wire_inspect(ptr, 88));
+            if (idx & 1) == 0 { if v != 0 { dropped += 1; } } else if v != 0 { fp += 1; }
             if (idx & 0x3FFF) == 0 { let _ = periodic_realign_pulse(&mut boot_pulse, rdtscp_serialized(), 32); }
         }
         let t1 = rdtscp_serialized();
@@ -327,6 +396,8 @@ pub extern "efiapi" fn efi_main(image_handle: EfiHandle, system_table: *const Ef
         serial_write_bytes(b"[BENCH] 1,000,000 frames inspected in Ring 0\r\n");
         serial_write_bytes(b"[BENCH] Threats dropped (TTL + L7) : ");
         serial_write_u64(dropped);
+        serial_write_bytes(b" | FP=");
+        serial_write_u64(fp);
         serial_write_bytes(b"\r\n[BENCH] Average CPU cycles / frame   : ");
         serial_write_u64(cycles_per_pkt);
         serial_write_bytes(b" cycles\r\n");

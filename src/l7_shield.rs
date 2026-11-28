@@ -126,6 +126,7 @@ pub unsafe fn inspect_l7_payload_asm(payload: *const u8, len: usize, dst_port: u
     }
 }}
 
+#[cfg(not(target_os = "uefi"))]
 pub fn benchmark_l7_swar() -> (u64, u8) {
     let tls_hello: [u8; 16] = [
         0x16, 0x03, 0x03, 0x00, 0xF4, 0x01, 0x00, 0x00,
@@ -160,6 +161,7 @@ pub unsafe fn cpu_supports_avx512bw() -> bool { unsafe {
 }}
 
 #[cfg(target_arch = "x86_64")]
+#[cfg(not(target_os = "uefi"))]
 #[target_feature(enable = "avx512f,avx512bw")]
 #[inline]
 pub unsafe fn scan_cacheline_byte_avx512(ptr: *const u8, needle: u8) -> u64 { unsafe {
@@ -180,6 +182,7 @@ pub unsafe fn scan_cacheline_byte_avx512(ptr: *const u8, needle: u8) -> u64 { un
 }}
 
 #[inline(always)]
+#[cfg(not(target_os = "uefi"))]
 pub unsafe fn inspect_l7_payload_adaptive(payload: *const u8, len: usize, dst_port: u16) -> L7Verdict { unsafe {
     #[cfg(target_arch = "x86_64")]
     if dst_port == 80 && len >= 64 && !payload.is_null() && cpu_supports_avx512bw() {

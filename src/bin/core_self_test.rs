@@ -240,6 +240,30 @@ pub extern "C" fn test_main(argc: usize, argv: *const *const u8) -> ! {
         let r4 = unsafe { zero_core_lib::l7_shield::canonical_l7_normalizer(8443, tr_ok.as_ptr(), tr_ok.len()) };
         check(r1 == 2 && r2 == 2 && r3 == 2 && r4 == 0, b"[FAIL] transit_kev_swar\n");
     }
+    {
+        let mut zst = zero_core_lib::ZeroTransitState::new();
+        let mut f = [0u8; 96];
+        let p = f.as_mut_ptr();
+        unsafe {
+            core::ptr::write_unaligned(p.add(12) as *mut u16, 0x0800u16.to_be());
+            core::ptr::write_volatile(p.add(14), 0x45);
+            core::ptr::write_unaligned(p.add(16) as *mut u16, 82u16.to_be());
+            core::ptr::write_volatile(p.add(22), 64);
+            core::ptr::write_volatile(p.add(23), 6);
+            core::ptr::write_unaligned(p.add(34) as *mut u16, 51234u16.to_be());
+            core::ptr::write_unaligned(p.add(36) as *mut u16, 80u16.to_be());
+            core::ptr::write_volatile(p.add(46), 0x50);
+            core::ptr::write_volatile(p.add(47), 0x18);
+            core::ptr::write_unaligned(p.add(48) as *mut u16, 1024u16.to_be());
+            core::ptr::copy_nonoverlapping(b"GET /api/v1/health HTTP/1.1\r\nHost: ok.local".as_ptr(), p.add(54), 42);
+            let v0 = zero_core_lib::zero_bare_metal_transit_step(&mut zst, f.as_ptr(), 96);
+            core::ptr::copy_nonoverlapping(b"GET /%252e%252e/etc/passwd HTTP/1.1\r\nHost: x".as_ptr(), p.add(54), 42);
+            let v2 = zero_core_lib::zero_bare_metal_transit_step(&mut zst, f.as_ptr(), 96);
+            core::ptr::write_volatile(p.add(14), 0x46);
+            let v1 = zero_core_lib::zero_bare_metal_transit_step(&mut zst, f.as_ptr(), 96);
+            check(v0 == 0 && v2 == 2 && v1 == 1 && zst.passed == 1 && zst.banned == 1 && zst.dropped == 1, b"[FAIL] transit_step\n");
+        }
+    }
     let ok_msg = b"[OK] cargo test (no_std / no_main): 128-bit TLS Downgrade, L7 ASM, SMP VM-Exit & EPT XO VERIFIED!\n";
     unsafe {
         sys_write(1, ok_msg.as_ptr(), ok_msg.len());
