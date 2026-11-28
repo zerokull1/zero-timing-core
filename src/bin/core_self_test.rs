@@ -210,7 +210,8 @@ pub extern "C" fn test_main(argc: usize, argv: *const *const u8) -> ! {
     }
     {
         let mut slot = zero_core_lib::l7_shield::MetaNormSlot {
-            flow_hash: 0, meta_anchor: 0, seq_or_ctr: 0, state: 0, _pad: [0; 39],
+            flow_hash: 0, meta_anchor: 0, seq_or_ctr: 0,
+            replay_win: 0, state: 0, _pad: [0; 39],
         };
         let mut pkt = [0u8; 148];
         let v0 = zero_core_lib::l7_shield::normalize_64b_gate(&mut slot, 0x1111, false, true, 0x02, &[]);

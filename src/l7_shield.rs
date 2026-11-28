@@ -799,6 +799,7 @@ pub struct MetaNormSlot {
     pub flow_hash: u64,
     pub meta_anchor: u64,
     pub seq_or_ctr: u64,
+    pub replay_win: u64,
     pub state: u8,
     pub _pad: [u8; 39],
 }
@@ -840,20 +841,30 @@ pub fn normalize_64b_gate(
             & (same_flow == 1) & (slot.state == 1) & (idx2 == cli_idx)) as u8;
 
         let idx_ok = ((idx1 == srv_idx) | (idx1 == cli_idx)) as u8;
-        let ctr_ok = ((ctr >= slot.seq_or_ctr) | (slot.seq_or_ctr.wrapping_sub(ctr) <= 2048)) as u8;
+        let ctr_new = (ctr > slot.seq_or_ctr) as u8;
+        let diff = slot.seq_or_ctr.wrapping_sub(ctr);
+        let ctr_win = ((ctr <= slot.seq_or_ctr) & (diff < 64) & (((slot.replay_win >> (diff & 63)) & 1) == 0)) as u8;
         let is_data = ((msg_type == 4) & (l7_len >= 64) & ((l7_len & 15) == 0) & (rsv_ok == 1)
-            & (same_flow == 1) & (slot.state == 2) & (idx_ok == 1) & (ctr_ok == 1)) as u8;
+            & (same_flow == 1) & (slot.state == 2) & (idx_ok == 1) & ((ctr_new | ctr_win) == 1)) as u8;
 
         if is_init == 1 {
             slot.flow_hash = hash;
             slot.meta_anchor = idx1 as u64;
             slot.seq_or_ctr = 0;
+            slot.replay_win = 0;
             slot.state = 1;
         } else if is_resp == 1 {
             slot.meta_anchor = ((idx1 as u64) << 32) | (cli_idx as u64);
+            slot.replay_win = 0;
             slot.state = 2;
-        } else if is_data == 1 && ctr > slot.seq_or_ctr {
-            slot.seq_or_ctr = ctr;
+        } else if is_data == 1 {
+            if ctr_new == 1 {
+                let sh = ctr - slot.seq_or_ctr;
+                slot.replay_win = if sh >= 64 { 1 } else { (slot.replay_win << sh) | 1 };
+                slot.seq_or_ctr = ctr;
+            } else {
+                slot.replay_win |= 1u64 << (diff & 63);
+            }
         }
         return (is_init | is_resp | is_cook | is_data) ^ 1;
     }
@@ -871,7 +882,18 @@ pub fn normalize_64b_gate(
     }
     if l7_len > 0 && slot.state == 1 {
         if is_cleartext_http && l7_len < 64 && (tcp_flags & 0x01) == 0 {
-            return 1;
+            let mut has_crlf = false;
+            let mut j = 4usize;
+            while j + 4 <= l7_len {
+                if u32::from_le_bytes([l7[j], l7[j + 1], l7[j + 2], l7[j + 3]]) == 0x0A0D0A0D {
+                    has_crlf = true;
+                    break;
+                }
+                j += 1;
+            }
+            if !has_crlf {
+                return 1;
+            }
         }
         slot.state = 2;
     }
