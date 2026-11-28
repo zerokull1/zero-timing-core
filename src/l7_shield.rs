@@ -759,45 +759,40 @@ pub unsafe fn tcp_boundary_split_guard(dport: u16, tcp_flags: u8, l7_len: usize,
 #[inline(always)]
 pub fn inspect_php_proto_vector_swar(buf: &[u8]) -> bool {
     let len = buf.len();
-    if len < 6 {
-        return false;
-    }
+    if len < 6 { return false; }
     let scan_lim = if len > 1024 { 1024 } else { len };
+    let p = buf.as_ptr();
     let mut hit: u32 = 0;
     let mut i: usize = 0;
-    while i + 4 <= scan_lim {
-        let w = u32::from_le_bytes([buf[i], buf[i + 1], buf[i + 2], buf[i + 3]]);
-        let b0 = (w as u8) & 0xDF;
-        let b1 = (w >> 8) as u8;
-        let b2 = (w >> 16) as u8;
-        let is_oc = ((b0 == b'O') as u32) | ((b0 == b'C') as u32);
-        let is_colon = (b1 == b':') as u32;
-        let is_digit = (b2.wrapping_sub(b'0') <= 9) as u32;
-        hit |= is_oc & is_colon & is_digit;
+    unsafe {
+        while i + 4 <= scan_lim {
+            let w = (p.add(i) as *const u32).read_unaligned().to_le();
+            let b0 = (w as u8) & 0xDF;
+            let b1 = (w >> 8) as u8;
+            let b2 = (w >> 16) as u8;
+            let is_oc = ((b0 == b'O') as u32) | ((b0 == b'C') as u32);
+            let is_colon = (b1 == b':') as u32;
+            let is_digit = (b2.wrapping_sub(b'0') <= 9) as u32;
+            hit |= is_oc & is_colon & is_digit;
 
-        let wu = w & 0xDFFFFFFF;
-        hit |= ((wu == 0x4133254F) as u32) | ((wu == 0x41332543) as u32);
+            let wu = w & 0xDFFFFFFF;
+            hit |= ((wu == 0x4133254F) as u32) | ((wu == 0x41332543) as u32);
 
-        let wl = w | 0x20202020;
-        if wl == 0x736E692F && i + 12 <= scan_lim {
-            let tail = u64::from_le_bytes([
-                buf[i + 4], buf[i + 5], buf[i + 6], buf[i + 7],
-                buf[i + 8], buf[i + 9], buf[i + 10], buf[i + 11],
-            ]);
-            hit |= ((tail | 0x2020200020202020) == 0x7068702E6C6C6174) as u32;
+            let wl = w | 0x20202020;
+            if wl == 0x736E692F && i + 12 <= scan_lim {
+                let tail = (p.add(i + 4) as *const u64).read_unaligned().to_le();
+                hit |= ((tail | 0x2020200020202020) == 0x7068702E6C6C6174) as u32;
+            }
+            if wl == 0x6470752F && i + 11 <= scan_lim {
+                let tail = ((p.add(i + 4) as *const u64).read_unaligned().to_le()) & 0x00FF_FFFF_FFFF_FFFF;
+                hit |= ((tail | 0x0020202000202020) == 0x007068702E657461) as u32;
+            }
+            if wl == 0x72616870 && i + 7 <= scan_lim {
+                let sep = (*p.add(i + 4) as u32) | ((*p.add(i + 5) as u32) << 8) | ((*p.add(i + 6) as u32) << 16);
+                hit |= (sep == 0x002F2F3A) as u32;
+            }
+            i += 1;
         }
-        if wl == 0x6470752F && i + 11 <= scan_lim {
-            let tail = u64::from_le_bytes([
-                buf[i + 4], buf[i + 5], buf[i + 6], buf[i + 7],
-                buf[i + 8], buf[i + 9], buf[i + 10], 0,
-            ]);
-            hit |= ((tail | 0x0020202000202020) == 0x007068702E657461) as u32;
-        }
-        if wl == 0x72616870 && i + 7 <= scan_lim {
-            let sep = (buf[i + 4] as u32) | ((buf[i + 5] as u32) << 8) | ((buf[i + 6] as u32) << 16);
-            hit |= (sep == 0x002F2F3A) as u32;
-        }
-        i += 1;
     }
     hit != 0
 }
@@ -914,26 +909,29 @@ pub fn normalize_64b_gate(
 pub fn inspect_cacti_4http2shell_swar(payload: &[u8]) -> bool {
     let limit = if payload.len() < 512 { payload.len() } else { 512 };
     if limit < 26 { return false; }
-    const KEY: &[u8; 24] = b"preview_graphs_per_page=";
+    let p = payload.as_ptr();
     let mut i = 0usize;
-    while i + 25 <= limit {
-        let w0 = u64::from_le_bytes([
-            payload[i], payload[i+1], payload[i+2], payload[i+3],
-            payload[i+4], payload[i+5], payload[i+6], payload[i+7],
-        ]);
-        if w0 == 0x5f77656976657270u64 && &payload[i..i+24] == KEY {
-            let mut j = i + 24;
-            let end = if j + 32 < limit { j + 32 } else { limit };
-            let mut bad = 0u8;
-            while j < end {
-                let c = payload[j];
-                if c == b'&' || c == b' ' || c == b'\r' || c == b'\n' { break; }
-                bad |= ((c.wrapping_sub(b'0')) > 9) as u8;
-                j += 1;
+    unsafe {
+        while i + 25 <= limit {
+            let w0 = (p.add(i) as *const u64).read_unaligned().to_le();
+            if w0 == 0x5F77656976657270u64 {
+                let w1 = (p.add(i + 8) as *const u64).read_unaligned().to_le();
+                let w2 = (p.add(i + 16) as *const u64).read_unaligned().to_le();
+                if w1 == 0x705F736870617267u64 && w2 == 0x3D656761705F7265u64 {
+                    let mut j = i + 24;
+                    let end = if j + 32 < limit { j + 32 } else { limit };
+                    let mut bad = 0u8;
+                    while j < end {
+                        let c = *p.add(j);
+                        if c == b'&' || c == b' ' || c == b'\r' || c == b'\n' { break; }
+                        bad |= ((c.wrapping_sub(b'0')) > 9) as u8;
+                        j += 1;
+                    }
+                    if bad != 0 { return true; }
+                }
             }
-            if bad != 0 { return true; }
+            i += 1;
         }
-        i += 1;
     }
     false
 }
