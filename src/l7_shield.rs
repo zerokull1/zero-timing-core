@@ -902,3 +902,32 @@ pub fn normalize_64b_gate(
     }
     0
 }
+
+/// Безветвящийся SWAR-детектор Cacti 4HTTP2SHELL (0-day 28.11.2026)
+#[inline(always)]
+pub fn inspect_cacti_4http2shell_swar(payload: &[u8]) -> bool {
+    let limit = if payload.len() < 512 { payload.len() } else { 512 };
+    if limit < 26 { return false; }
+    const KEY: &[u8; 24] = b"preview_graphs_per_page=";
+    let mut i = 0usize;
+    while i + 25 <= limit {
+        let w0 = u64::from_le_bytes([
+            payload[i], payload[i+1], payload[i+2], payload[i+3],
+            payload[i+4], payload[i+5], payload[i+6], payload[i+7],
+        ]);
+        if w0 == 0x5f77656976657270u64 && &payload[i..i+24] == KEY {
+            let mut j = i + 24;
+            let end = if j + 32 < limit { j + 32 } else { limit };
+            let mut bad = 0u8;
+            while j < end {
+                let c = payload[j];
+                if c == b'&' || c == b' ' || c == b'\r' || c == b'\n' { break; }
+                bad |= ((c.wrapping_sub(b'0')) > 9) as u8;
+                j += 1;
+            }
+            if bad != 0 { return true; }
+        }
+        i += 1;
+    }
+    false
+}
