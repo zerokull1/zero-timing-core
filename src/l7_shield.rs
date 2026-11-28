@@ -625,6 +625,9 @@ pub unsafe fn canonical_l3_l4_gate(ip: *const u8, len: usize) -> u64 { unsafe {
             let dport = u16::from_be_bytes([*ip.add(22), *ip.add(23)]);
             if dport == 443 || dport == 8443 { return 1; }
         } else if proto == 6 {
+            let tcp_win = u16::from_be_bytes([pkt[34 + 14], pkt[34 + 15]]);
+            let doff_b = ((pkt[34 + 12] >> 4) as usize) << 2;
+            if dport == 2049 || (plen > 34 + doff_b && tcp_win < 64) { return L7Verdict::Ban; }
             if len < 40 { return 1; }
             let win = u16::from_be_bytes([*ip.add(34), *ip.add(35)]);
             if win < 64 { return 1; }
