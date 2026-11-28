@@ -34,7 +34,7 @@ flowchart LR
 * **Silicon-Tuned Memory & GPU Sideband (`gpu_offload/vk_iat_bridge.c`):** `2MB HugePages` (`0.0012%` dTLB misses — 74,789x reduction), `64B` cache-line isolation against MESIF false sharing (`17.90` vs `112.62` cycles), `RDTSC` anti-stepping tripwire with `YMM14/15` auto-incineration, and warmed `Vulkan` Shannon IAT entropy offload (`59.14 µs` RTT).
 * **Elastic Self-Placing Multi-Core (`src/topology_placer.rs`, `src/bin/zero_elastic_core.rs`):** Unlimited CPU affinity topology scanner (`SYS_sched_getaffinity`), automatic detection of `L1d` / `128-bit LOCK` / `AVX2`, hot-core selection for `YMM15`, and lock-free `Work-Stealing` across NUMA nodes (**30,000,000 pulses @ 169 cycles/pulse**).
 * **Last-Barrier Pulse Trap & `W^X` Arena (`src/pulse_barrier.rs`, `src/bin/zero_pure_asm_engine.rs`):** Memory-sealed execution (`memfd_create` + `mlock` + `PROT_NONE` guard pages + `0x0F0B` `UD2` minefields), hardware `SSE4.2` `CRC32C` fail-close verification, 3-phase `TTL-Mirage` (`65 -> 65..118 -> 0x00`), and register-pinned key storage in `YMM15` wiped via non-temporal `vmovntdq` + `CLFLUSH`.
-* **Branchless `x86_64` ASM L7 Inspection & SWAR RFC Normalizer (`src/l7_shield.rs`):** Constant-time `cmov` / SWAR / `AVX-512` (`vpcmpeqb` + `kmovq`) inspection and unified **287-byte** `RFC 9000/9112/9113` protocol normalizer (`29.4 cycles/pkt` dual `SWAR+ASM` pass / `~113.63 Mpps/core`, `3.50 IPC`, `0.002%` branch-misses) blocking HTTP/FastCGI Smuggling (`CVE-2026-129289`), HTTP/2 `WINDOW_UPDATE`/Header Bombs (`CVE-2026-123007`, `CVE-2026-49975`), LiteLLM RCE (`CVE-2026-40217`), Zero-QUIC (`UDP/443` 1-cycle `XDP_DROP` -> `RFC 9114` `TCP/443` fallback), TLS 1.3 Downgrade/Splitting, and 9 industrial/enterprise protocols, plus a **145-byte** branchless `UniversalSwarRule` tensor engine (`inspect_universal_swar`, **17.1 cycles/pkt**, **3.14 IPC**) verifying framing invariants across **40+ binary, telecom, storage, and ICS/SCADA protocol profiles** (including `DIAMETER`, `MQTT`, `OPC UA`, `iSCSI`, `NVMe-oF/TCP`, `Kerberos v5`, `SNMP`, `BFD`, `LACP`, `PTP`, `Geneve`, `CoAP`, `STUN`, `NFSv4`, `TACACS+`, plus `0xFFFFFFFF` / `/32` host-isolation) via 32-byte algebraic descriptors with **autonomous contrastive XOR self-learning (`FP = 0`)**.
+* **Branchless `x86_64` ASM L7 Inspection & SWAR RFC Normalizer (`src/l7_shield.rs`):** Constant-time `cmov` / SWAR / `AVX2` on Haswell / `AVX-512` runtime `CPUID` dispatch (`vpcmpeqb` + `kmovq`) inspection and unified **287-byte** `RFC 9000/9112/9113` protocol normalizer (`29.4 cycles/pkt` dual `SWAR+ASM` pass / `~113.63 Mpps/core`, `3.50 IPC`, `0.002%` branch-misses) blocking HTTP/FastCGI Smuggling (`CVE-2026-129289`), HTTP/2 `WINDOW_UPDATE`/Header Bombs (`CVE-2026-123007`, `CVE-2026-49975`), LiteLLM RCE (`CVE-2026-40217`), Zero-QUIC (`UDP/443` 1-cycle `XDP_DROP` -> `RFC 9114` `TCP/443` fallback), TLS 1.3 Downgrade/Splitting, and 9 industrial/enterprise protocols, plus a **145-byte** branchless `UniversalSwarRule` tensor engine (`inspect_universal_swar`, **17.1 cycles/pkt**, **3.14 IPC**) verifying framing invariants across **40+ binary, telecom, storage, and ICS/SCADA protocol profiles** (including `DIAMETER`, `MQTT`, `OPC UA`, `iSCSI`, `NVMe-oF/TCP`, `Kerberos v5`, `SNMP`, `BFD`, `LACP`, `PTP`, `Geneve`, `CoAP`, `STUN`, `NFSv4`, `TACACS+`, plus `0xFFFFFFFF` / `/32` host-isolation) via 32-byte algebraic descriptors with **autonomous contrastive XOR self-learning (`FP = 0`)**.
 * **L1-Resident AVX2 Neural Micro-Agent & DDR Synaptic Memory (`src/l1_ai_agent.rs`) + SWAR/AVX2 Guards:** Constant-time `vpmaddubsw` dot-product + saturated Hebbian `Write-on-Learn` (`vpaddsb`/`vpsubsb`) residing in `L1i` (`99.99994%` L1i hit, **82.62 cycles/step** across `40M` generations, autonomous `0 -> 1` zero-day tunnel detection in `16` epochs with `FP = 0`), paired with branchless `SWAR /24` flood-storm detection and `AVX2 32B` HTTP URI sanitization — all within a total core `.text` size of **11,159 bytes** (`34.0% L1i`).
 * **Silicon-Backed Flow & Timing Gates (`src/flow_table.rs`, `src/tsc.rs`):** `Intel AES-NI` (`aesenc`) + `SSE4.2` (`crc32q`) 5-tuple hashing against collision DoS and serialized `lfence + rdtsc` constant-time execution windows (`0.002` cycles side-channel delta).
 * **Cross-Architecture HAL (`zero_hal v1.0.0`):** Zero-dependency hardware abstraction layer compiled cleanly with 0 warnings across **`x86_64`**, **`s390x` (IBM LinuxONE / z15)**, **`aarch64` (ARM64 NEON)**, and **`riscv64gc`**.
@@ -144,91 +144,13 @@ $ taskset -c 0 perf stat -e cycles,instructions,branch-misses ./poc_veth_l7
 
 - **Cross-Layer 64B HTTP & WireGuard Index/Nonce Gate (27 Nov 2026):** Enforces >=64B initial cleartext HTTP L7 framing (blocking 64B -> 2x32B boundary splits) and stateful WireGuard handshake/data binding (`148B Initiation <-> 92B Response -> >=64B 16B-aligned Transport Data` with `cli_idx`/`srv_idx` & monotonic 64-bit `Counter` window) in 503B L1i.
 
-## Лицензия / License
-
-Проект распространяется под лицензией **GNU Affero General Public License v3.0 (AGPL-3.0)** — см. [`LICENSE`](LICENSE). Любое сетевое или облачное использование модифицированных версий требует публикации исходного кода.
-
-
-## Multi-Port XDP Mesh & Silicon Self-Defense
-- **All-Ports XDP Mesh (1..1024 NICs):** Shared eBPF/XDP program and unified `BPF_MAP_TYPE_RINGBUF` bound simultaneously across all physical interfaces with millisecond hotplug auto-discovery and ingress quarantine.
-- **Unified Hardware Supervisor (`Core #3`, `3.1 KB #![no_std]`):** Self-calibrating `CPUID 0x04` L1d cache eviction trap (`AVX2` counter-scrub), `MSR 0x19C` digital thermal cryo-zeroize (`YMM0–YMM15`), and `CPUID` hypervisor stealth audit.
-
-## Adaptive Multi-WAN ECMP & Early-Boot Perimeter Lock
-
-- **Adaptive Multi-WAN (`deploy/zeromani-multiwan.sh` + `deploy/zeromani-multiwan-watchdog.py`):** Automatically aggregates all active uplinks (USB tethering, Wi-Fi, Ethernet) via L4 ECMP (`fib_multipath_hash_policy=1`), binds active flows with `nftables` Sticky Connmark (`ct mark`) and Per-NIC SNAT (`snat ip to`), enforces outbound `TTL=65` + `MTU 1380` + `FQ`, and dynamically recalculates `nexthop` weights every 3 seconds based on live RTT and packet loss.
-- **Early-Boot `network-pre.target` Lock (`deploy/install-early-boot.sh`):** Binds `nftables.service`, `zeromani-18caps.service` (All-Ports XDP Mesh), and `zeromani-core3-guard.service` strictly `Before=network-pre.target NetworkManager.service`, eliminating the warm/cold reboot race window before NICs and DHCP come online.
-- **Mobile Gateway XDP Compatibility:** Permits inbound `TTL=65` / `HopLimit=65` frames at the XDP ingress layer for seamless operation behind mobile tethering gateways.
-
-## Latest Verified Milestones (Nov 2026)
-
-- **Zero-Allocation C11 L2–L7 Data Plane (`zerokull-c11-go`):** Full 16-byte SWAR protection against HTTP `CL+TE` smuggling, mixed-case path traversal, and `UDP/443` QUIC fallback; verified with 1,000,000 fuzz packets and 47 adversarial overflow/bomb/injection scenarios under `ASan + UBSan` (`0 faults`).
-- **Hardware Ceiling Benchmarked (Intel Haswell Core i5-4590 + DDR3-1600 Dual-Channel):**
-  - `L1d` access latency: **4.76 cycles (1.44 ns)** (`3.50 IPC`, `0.002%` branch misses).
-  - Single-core `AVX2` non-temporal stream bandwidth: **21.00 GB/s** (`DDR3` 2MB HugePage latency: **69.56 ns**).
-
-- **Epoch-Polymorphic Port 0/1 JIT & Exotic L4 Drop (24 Nov 2026):** Added a 43-byte `x86_64` epoch-polymorphic JIT emitter (`src/pulse_barrier.rs`) balancing Haswell `Port 0` (`AESENC`) and `Port 1` (`CRC32Q`) across `W^X` `Slot A <-> Slot B` arenas with zero `DSB Machine Clear` stalls (**6.62 cycles/pkt**), alongside 1-cycle IPv4/IPv6 XDP ingress drop for `SCTP (132)`, `DCCP (33)`, `GRE (47)`, and `RDS (21)`.
-
-## Production Compatibility & Zero-FP Guarantees (Architectural Clarifications)
-
-To prevent misconceptions about stateless packet-level filtering, this engine implements specific register-level and protocol-compliant guarantees for real-world production networks:
-
-- **Cross-Packet TCP Boundary Stitching (No Full-Stream Buffering Needed):** While the engine intentionally avoids heavy multi-megabyte TCP stream reassembly (zero heap allocations), attackers **cannot bypass L7 inspection by splitting payloads across small TCP segments** (e.g., `GET /../` split into 10-byte frames). Three deterministic mechanisms close boundary evasion in L1 cache:
-  1. **TCP Boundary Split Guard:** Blocks unauthenticated micro-segmentation (`< 12B` initial L7 frames without `FIN`).
-  2. **Register-Level Tail Stitching (`prev_tail_qword`):** Tracks the 8-byte trailing boundary of the previous in-order TCP segment (`expected_seq`) in the 64B lock-free flow slot to catch split signatures across packet boundaries.
-  3. **TCP Window Squeezing Shield:** Drops artificially throttled `TCP Window < 64B` probes used to force server-side fragmentation.
-- **Mobile Gateways & Tethering (`TTL=65 / HopLimit=65`):** Explicitly permits inbound and outbound `TTL=65` / `HopLimit=65` frames at the XDP ingress layer for seamless operation behind mobile tethering gateways and multi-WAN uplinks.
-- **RFC 9114 Seamless QUIC Fallback:** Dropping `UDP/443` (`Zero-QUIC`) does not break web browsing; standard browsers (Chrome, Firefox, Safari) transparently fall back to `TCP/443 (TLS 1.3)` within milliseconds per RFC 9114.
-- **CDN & Multi-Stream Safe:** Excludes short TLS control records (`< 16B`) and high-concurrency CDN responses from burst-ban heuristics (`FP = 0` verified across millions of mixed frames).
-- **Safe Rollout via `--shadow` (Dry-Run Mode):** Supports zero-risk inline auditing (`XDP_PASS` with full `would_drop` / `would_ban` telemetry) before enabling active `ENFORCE` mode.
-
 ## Scope & Non-Goals (Architectural Boundaries)
 
 This kernel is intentionally engineered as a **deterministic L2–L7 perimeter gate and protocol normalizer**, not a full-stream antivirus or deep file-carving proxy:
 
-- **In Scope (L1i / XDP Hot-Path, ~25–39 cycles/pkt):** Line-rate L3/L4 anomaly drop, branchless SWAR/SIMD normalization (`CL+TE` HTTP smuggling, mixed-case URI traversal `..;/`, HTTP/2 header bombs, stateless `UDP/443` QUIC fallback to TLS 1.3), and zero-allocation IP quarantine.
-- **Explicit Non-Goals (ICAP / Application / Endpoint Layers):** No full TCP stream reassembly, no file carving, and no ZIP/PDF/ELF unpacking or YARA payload scanning inside the privileged perimeter path.
+- **In Scope (L1i / XDP Hot-Path):** Line-rate L3/L4 anomaly drop, branchless SWAR/SIMD normalization (`CL+TE` & `Chunked-Ext` HTTP smuggling, mixed-case URI traversal `..;/`, HTTP/2 header bombs, `TCP Window >= 64`, `TCP/2049` isolation, stateless `UDP/443` QUIC fallback to TLS 1.3), and zero-allocation IP quarantine (`1969–2026 RFC` continuum verified across `1.4M` frames, `FP = 0`).
+- **Explicit Non-Goals (Application / Endpoint Layers):** No heavy multi-megabyte TCP stream reassembly, no file carving, and no ZIP/PDF/ELF unpacking inside the privileged L1i perimeter path.
 
-## Red Team Hardening: Unsigned AVX2 AI & Canonical L7 (25.11.2026)
-- **Unsigned `u8` Feature Learning (`src/l1_ai_agent.rs`)**: Sign-axis shift (`_mm256_xor_si256` `0x80` + `vpcmpgtb`) eliminating signed saturation blind spots for high-amplitude features (`128..255`), 32B alignment guard, and weight saturation capping (`clean_fp = 0`).
-- **Collision-Free Canonical Normalizer (`src/l7_shield.rs`)**: Full HTTP/1.x method coverage (512B URI window) and exact `Content-Length:` vs `Content-Type:` header disambiguation.
+## Лицензия / License
 
-### Protocol-Geometry & East-West Quarantine
-- **Zero-Allocation L7 Semantic Gate (`src/l7_shield.rs`)**: Blocks HTTP/2 Rapid Reset, `CONTINUATION` Flood, DNS tunneling (`label_len >= 48`), `HTTP CONNECT`, WebSocket smuggling, `Host:` DNS rebinding (`127.0.0.1` / `169.254.169.254` / `localhost`), and East-West lateral-movement ports (`135`, `137-139`, `445`, `3389`, `5355`, `5985-5986`).
-- **Full-Stack Defense Continuum**: Spans UEFI Pre-OS SNP isolation, `VT-d` IOMMU DMA protection, `Before=network-pre.target` XDP attachment, East-West rack quarantine, and L1-resident unsigned AVX2 inference (`493.64M fps`, `6.67 cycles/pkt`).
-
-### Out-of-Band TAP / SPAN Anomaly Radar
-To audit a live data-center rack or transit link without inline risk, mirror traffic to a dedicated NIC with IP/ARP/GRO disabled so L1-resident SIMD gates inspect raw wire frames at line rate (`493.64M fps`):
-```bash
-sudo ip addr flush dev eth1 && sudo ip link set dev eth1 arp off promisc on up
-sudo sysctl -w net.ipv6.conf.eth1.disable_ipv6=1 && sudo ethtool -K eth1 gro off lro off
-```
-- **RFC 793 & Nmap Fingerprint Black-Hole**: Enforces `rfc793_tcp_guard` against invalid flag combinations, `SYN` payload smuggling, `URG` pointer OOB, and stateless `ACK` scans.
-- **RFC 9000 & 9113 Branchless SWAR Hardening**: Blocks both QUIC Long (`0x80`) and 1-RTT Short (`0x40`) headers in 1 cycle, closes `>=64KB` 24-bit HTTP/2 frame length bypasses, and enforces exact 4-byte `WINDOW_UPDATE` framing.
-- **RFC 793 Deception Tarpit Hardening**: Enforces genuine `SYN+ACK` (`0x12`) handshakes, eliminates `RST`/invalid-flag amplification loops, guards `max_cap`, and blocks Land/broadcast reflection across **58 audited full-stack vectors**.
-- **Idempotent Pulse Barrier & W^X Bounds**: Enforces strict `W^X` copy limits (`vm <= 512B`, `mcode <= 512B`, `mono <= 7168B`), capsule count ceiling (`n_caps <= 256`), and atomic idempotent `trip_fail_close()` (`swap(1, AcqRel)`) across **73 audited full-stack vectors**.
-- **Core #3 L1d Eviction Trap Hardening**: Secures `/dev/shm/zeromani_core3_guard` with `O_NOFOLLOW | 0600`, enforces SMI-resistant min-64 `RDTSCP` baseline calibration (`<= 600` cycles), and triggers hardware `clflush` line eviction on cryo/hypervisor alerts across **73 audited full-stack vectors**.
-
-- **UEFI Boot Master CPU Pulse & Periodic Hardware Re-Align (`uefi_stage0/`, `zero_hal/src/tsc.rs`)**: Calibrates a 64B-aligned `HardwarePulseAnchor` via serialized `RDTSCP + LFENCE` at Pre-OS boot (`[PULSE-0]`) and dynamically re-aligns batching cadence (`>> 3` shift-only) on `CPUID.01H` or NIC/DDR hardware swaps across **73 audited full-stack vectors**.
-
-- **Zero-Allocation Host Watchdog (`zero-host-guard` & Module #6)**: Inspects immutable `/proc/[pid]/exe` symlinks alongside `cmdline`, handles `IN_Q_OVERFLOW` bursts, locks `~/.zero_host_guard.log` with `O_NOFOLLOW | 0600`, and freezes unauthorized autonomous agents (`SIGSTOP`) with zero heap allocations across **73 audited full-stack vectors**.
-
-- **Interactive Operator Console & SIEM CEF Exporter (`tools/zero_ctl.c` & `zeromani_hud`)**: Zero-dependency CLI & GPU operator console with real-time XDP/L2 IP radar for instant east-west rack isolation, live Blacklist/Whitelist controls, EN/RU UI, and SIEM CEF telemetry export across **73 audited vectors**.
-
-## Engineering Roadmap
-See [ROADMAP.md](ROADMAP.md) ([Русская версия](ROADMAP.ru.md)) for Phase 1–4 milestones from 73-vector silicon hardening to `AF_XDP` Zero-Copy and SmartNIC offload.
-- **Linux Kernel Ring-0 DKMS Engine Hardening (`zero_timing_ring0`)**: Boots directly into `MODE=ENFORCE`, restricts `/proc/zero_timing_ring0` to `0600`, enforces `synchronize_rcu()` on unload, and blocks Land attacks (`saddr == daddr`), Zero-QUIC (`UDP/443,8443`), and `RFC 793` TCP flag/OOB anomalies in Ring 0 across **73 audited full-stack vectors**.
-
-## Universal Hardware-Adaptive GPFIFO + GPPut Fast-Path (26 Nov 2026)
-- **Hardware-Independent Ring Auto-Detector:** Dynamically discovers compatible compute ring/doorbell offsets via monotonic memory-page calibration (`Self-Test` verified) with automatic zero-dependency SWAR/CPU fallback on headless or non-GPU hosts.
-- **Zero-Syscall / Zero-Driver Pipelined Loop (`WIN=4`):** Eliminates per-dispatch driver submission overhead (`12.03 µs` vs `17.33 µs`, **1.44x throughput gain**, **83,094 ops/sec**).
-
-### CMS & PHP Object Injection SWAR Guard (Nov 2026)
-- **Branchless Protocol Oracle:** Detects unauthenticated CMS setup routes (`/install.php`, `/update.php`, `X-Original-URL` overrides), PHP Object Injection (`O:<digit>:`, `C:<digit>:`, URL-encoded `O%3A` / `C%3A` via `0xDFFFFFFF` case-folding mask), and `phar://` deserialization wrappers within the L1i cache budget.
-
-### Full-Stack Security & Silicon Audit (27 Nov 2026)
-- **Kernel NFS2ROOT (`CVE-2026-99362`) & VLAN `VID == 0` / QinQ (`CVE-2026-99805`) Guard:** Early `XDP_DROP` on `TCP/2049` prior to `sk_buff` allocation and strict L2 VLAN tag validation (`VID != 0`, QinQ depth `<= 2`) across `xdp_shield/`, `modules/pkt_cursor.h`, and `SECURITY_ADVISORIES.md`.
-- **End-to-End `W^X` Arena, KVM VT-x & `no_std` CLI Hardening (`modules/`, `tools/`):** Eliminated `RW` alias exposure in `ddr_arena_seal_wx()`, enforced `MFD_ALLOW_SEALING` + `F_SEAL_GROW|SHRINK|SEAL` and `UD2` (`0x0F0B`) minefields, hardened `SHA-256`/`HMAC` stack wiping (`explicit_bzero`) and `RFC 9113` `16 KB` frame bounds, verified `KVM`/`EPT` enclave `ioctl` error paths, and migrated `tools/zero_ctl.rs` raw syscalls to `write_volatile` + `compiler_fence` (`6.1 KB`, `-D warnings`, **ASan + UBSan + `-fanalyzer`** clean; core `.text = 6,746 B` / `9,385 B <= 16 KB` L1i).
-
-- **Hardened L7 & WireGuard Anti-Replay (28 Nov 2026):** Universal HTTP method & `CRLFCRLF` boundary validation paired with `RFC 6479` 64-packet sliding-window anti-replay resilient to wireless jitter.
-
-- **Full-Stack RFC Resilience (1969–2026 Verified, Nov 2026):** Validated across 1.4M frames spanning legacy transport constraints (`RFC 33/36`, `RFC 791/793`) to modern `QUIC`, `RFC 6479` anti-replay, `TCP Window >= 64` enforcement, and `TCP/2049` perimeter isolation (`0%` false positives).
+Проект распространяется под лицензией **GNU Affero General Public License v3.0 (AGPL-3.0)** — см. [`LICENSE`](LICENSE). Любое сетевое или облачное использование модифицированных версий требует публикации исходного кода.
